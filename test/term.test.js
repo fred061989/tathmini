@@ -86,3 +86,23 @@ test("comments only say 'excellent' for exceeding expectations, and 'fair' when 
   const good = { ...base, overall_percent: 70, overall_level: 'ME1', strongest: ['Kiswahili'], strongest_exceeding: true, needs_support: [] };
   assert.match(draftClassComment(good, scale), /good term.*excellent work in Kiswahili\. Keep it up!$/);
 });
+
+test('primary (4-level) term results and comments', () => {
+  const s4 = buildScale('cbc4');
+  const sci = { name: 'Science and Technology', code: 'SCT' };
+  const a = [
+    { id: 'p1', learning_area_id: 'S', learning_areas: sci, kind: 'end_term', assessed_on: '2027-03-27' },
+    { id: 'p2', learning_area_id: 'E', learning_areas: eng, kind: 'end_term', assessed_on: '2027-03-27' },
+    { id: 'p3', learning_area_id: 'M', learning_areas: maths, kind: 'end_term', assessed_on: '2027-03-27' },
+  ];
+  const res = [r('p1', 'a', 85), r('p2', 'a', 82), r('p3', 'a', 45), r('p1', 'b', 40), r('p2', 'b', 25), r('p3', 'b', 20)];
+  const t = buildTerm({ learners, assessments: a, results: res, scale: s4 });
+  const [amani, baraka] = t.learners;
+  assert.deepEqual([amani.areas.S.level, amani.areas.M.level, amani.overall_level], ['EE', 'AE', 'ME']);
+  assert.equal(amani.strongest_exceeding, true);
+  assert.match(draftClassComment(amani, s4), /^Amani has had a good term, meeting expectations or above in 2 of 3 learning areas, with excellent work in Science and Technology and English\. Mathematics needs extra effort\. Keep it up!$/);
+  assert.deepEqual([baraka.overall_level, baraka.needs_support.length], ['BE', 3]);
+  assert.match(draftClassComment(baraka, s4), /^Baraka needs close support to reach expectations\./);
+  assert.equal(draftHeadComment(baraka, s4), 'Needs close support. Please work with the school to help the learner improve.');
+  assert.deepEqual(t.areas.map(x => x.name), ['English', 'Mathematics', 'Science and Technology']);
+});
