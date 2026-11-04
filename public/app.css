@@ -72,20 +72,25 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
 .sheet-print th, .sheet-print td { padding: 5px 7px; border: 1px solid var(--border); white-space: nowrap; }
 .sheet-print .pill { font-size: 10.5px; padding: 0 5px; margin-left: 3px; }
 
+.swatch { width: 28px; height: 28px; padding: 0; border-radius: 50%; border: 2px solid #fff; box-shadow: 0 0 0 1px var(--border); }
+.swatch.on { box-shadow: 0 0 0 2px var(--text); }
+input[type=color] { width: 40px; height: 30px; padding: 0 2px; border: 1px solid var(--border); border-radius: 6px; background: transparent; }
+.rf-band-preview { background: var(--sc); color: #fff; padding: 5px 14px; border-radius: 4px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; font-size: 12px; }
+
 /* ---------- Termly report form (one A4 page per learner) ---------- */
 .report-bar { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-bottom: 16px; }
-.rf { background: #fff; color: #1d2420; width: 210mm; max-width: 100%; margin: 0 auto 24px; padding: 12mm 13mm 10mm;
+.rf { --sc: #1f7a4d; --sc-dark: #15532f; --sc-weak: #e8f3ec; --sc-weaker: #f1f8f4; background: #fff; color: #1d2420; width: 210mm; max-width: 100%; margin: 0 auto 24px; padding: 12mm 13mm 10mm;
   border: 1px solid #dfe4e0; border-radius: 4px; font: 11px/1.45 "Segoe UI", Roboto, system-ui, sans-serif; }
 .rf * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
 .rf .head { display: grid; grid-template-columns: 64px 1fr 64px; align-items: center; gap: 14px; padding: 2mm 0 5mm; }
-.rf .crest { width: 62px; height: 62px; border-radius: 50%; border: 2.5px solid #1f7a4d; display: grid; place-items: center;
-  font-weight: 800; color: #1f7a4d; font-size: 18px; letter-spacing: .02em; }
+.rf .crest { width: 62px; height: 62px; border-radius: 50%; border: 2.5px solid var(--sc); display: grid; place-items: center;
+  font-weight: 800; color: var(--sc); font-size: 18px; letter-spacing: .02em; }
 .rf .logo { width: 62px; height: 62px; object-fit: contain; }
 .rf .school { text-align: center; }
-.rf .school .name { font-size: 21px; font-weight: 800; letter-spacing: .06em; color: #15532f; text-transform: uppercase; }
+.rf .school .name { font-size: 21px; font-weight: 800; letter-spacing: .06em; color: var(--sc-dark); text-transform: uppercase; }
 .rf .school .meta { color: #4f5b55; margin-top: 3px; font-size: 10.5px; }
-.rf .school .motto { margin-top: 3px; font-style: italic; color: #1f7a4d; font-size: 10.5px; }
-.rf .band { background: #1f7a4d; color: #fff; text-align: center; padding: 6px 0; border-radius: 4px; font-weight: 800; letter-spacing: .14em; font-size: 12.5px; }
+.rf .school .motto { margin-top: 3px; font-style: italic; color: var(--sc); font-size: 10.5px; }
+.rf .band { background: var(--sc); color: #fff; text-align: center; padding: 6px 0; border-radius: 4px; font-weight: 800; letter-spacing: .14em; font-size: 12.5px; }
 .rf .band span { font-weight: 500; letter-spacing: .06em; opacity: .9; }
 .rf .provisional { text-align: center; color: #b3261e; font-weight: 700; letter-spacing: .08em; font-size: 10px; margin-top: 3px; }
 .rf .facts { display: grid; grid-template-columns: 2.1fr 1fr 1.2fr 1fr 1.5fr; margin-top: 4mm; border: 1px solid #cfd8d2; border-radius: 6px; overflow: hidden; }
@@ -93,17 +98,17 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
 .rf .facts div:last-child { border-right: 0; }
 .rf .facts span { display: block; font-size: 8.5px; color: #5e6a63; text-transform: uppercase; letter-spacing: .07em; margin-bottom: 1px; }
 .rf .facts b { font-size: 12px; }
-.rf h3 { font-size: 10px; text-transform: uppercase; letter-spacing: .08em; color: #1f7a4d; margin: 4.5mm 0 1.5mm; }
+.rf h3 { font-size: 10px; text-transform: uppercase; letter-spacing: .08em; color: var(--sc); margin: 4.5mm 0 1.5mm; }
 .rf table { width: 100%; border-collapse: collapse; background: #fff; }
 .rf th, .rf td { border: 1px solid #d5ddd8; padding: 3px 7px; vertical-align: middle; color: #1d2420; }
-.rf th { background: #e8f3ec; font-size: 8.8px; text-transform: uppercase; letter-spacing: .04em; color: #2c3a33; line-height: 1.25; padding: 3px; }
+.rf th { background: var(--sc-weak); font-size: 8.8px; text-transform: uppercase; letter-spacing: .04em; color: #2c3a33; line-height: 1.25; padding: 3px; }
 .rf tbody tr:nth-child(even) td { background: #fafcfb; }
 .rf td.num, .rf th.num { text-align: center; font-variant-numeric: tabular-nums; }
-.rf td.avg { font-weight: 800; background: #f1f8f4 !important; }
+.rf td.avg { font-weight: 800; background: var(--sc-weaker) !important; }
 .rf td.comment { font-size: 9px; color: #3b4540; line-height: 1.25; }
 .rf .perf { table-layout: fixed; }
 .rf .perf td:first-child { font-size: 10px; line-height: 1.2; font-weight: 700; }
-.rf tr.overall td { background: #e8f3ec !important; font-weight: 800; }
+.rf tr.overall td { background: var(--sc-weak) !important; font-weight: 800; }
 .rf .pill { display: inline-block; border: 1px solid currentColor; border-radius: 99px; padding: 0 6px; font-size: 9.5px; font-weight: 700; }
 .rf .l-EE { color: #1f7a4d; } .rf .l-ME { color: #2f6db3; } .rf .l-AE { color: #9a6700; } .rf .l-BE { color: #b3261e; }
 .rf .abs { color: #9a6700; font-weight: 700; font-size: 9.5px; }
@@ -111,19 +116,19 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
 .rf .grid2 { display: grid; grid-template-columns: 1.55fr 1fr; gap: 12px; margin-top: 4mm; }
 .rf .box { border: 1px solid #d5ddd8; border-radius: 6px; padding: 7px 11px; }
 .rf .summary { display: grid; grid-template-columns: auto 1fr; gap: 14px; align-items: center; }
-.rf .summary .big { font-size: 24px; font-weight: 800; color: #1f7a4d; line-height: 1.1; }
+.rf .summary .big { font-size: 24px; font-weight: 800; color: var(--sc); line-height: 1.1; }
 .rf .summary .side { border-left: 1px solid #d5ddd8; padding-left: 14px; }
 .rf .summary .side div { margin: 1px 0; line-height: 1.3; font-size: 10px; }
 .rf .key td { padding: 1.5px 7px; font-size: 9px; background: #fff !important; }
 .rf .comments { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-top: 4.5mm; }
 .rf .comments h3 { margin-top: 0; }
-.rf .comment-box { border: 1px solid #d5ddd8; border-left: 3px solid #1f7a4d; border-radius: 4px; padding: 6px 11px; background: #fbfdfc; min-height: 18mm; }
+.rf .comment-box { border: 1px solid #d5ddd8; border-left: 3px solid var(--sc); border-radius: 4px; padding: 6px 11px; background: #fbfdfc; min-height: 18mm; }
 .rf .comment-box .by { margin-top: 4px; font-size: 9.5px; color: #5e6a63; }
 .rf .sign { display: grid; grid-template-columns: 1fr 1fr 1fr 30mm; gap: 14px; margin-top: 3mm; align-items: end; }
 .rf .sign div { border-top: 1px solid #1d2420; padding-top: 4px; font-size: 9.5px; color: #5e6a63; }
 .rf .sign .stamp { height: 19mm; border: 1.5px dashed #b9c2bc; border-radius: 50%; display: grid; place-items: center; color: #9aa69f; }
 .rf .dates { display: flex; justify-content: center; gap: 30px; margin-top: 4mm; padding: 6px; background: #f3f6f4; border-radius: 6px; font-size: 11px; }
-.rf .dates b { color: #15532f; }
+.rf .dates b { color: var(--sc-dark); }
 .rf .foot { margin-top: 3mm; border-top: 1px solid #dfe4e0; padding-top: 4px; font-size: 8.5px; color: #5e6a63; display: flex; justify-content: space-between; gap: 10px; }
 /* Off-screen copy used to make PDFs: always exactly one A4 page, whatever the screen size. */
 .rf.capture { position: fixed; left: -10000px; top: 0; width: 210mm; height: 297mm; max-width: none; margin: 0; border: 0; border-radius: 0; overflow: hidden; }

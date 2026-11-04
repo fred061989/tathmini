@@ -373,6 +373,16 @@ test('school logo: only small real images are accepted, and it reaches the repor
   assert.equal((await admin('PATCH', '/api/school', { name: '  ' })).status, 400);
 });
 
+test('school colour: a dark enough colour is saved and reaches the report form', async () => {
+  const cls = fake.store.classes.find(c => c.grade === 7);
+  assert.equal(ok(await admin('PATCH', '/api/school', { colour: '#7A1F2B' })).school.colour, '#7a1f2b');
+  assert.equal(ok(await admin('GET', `/api/reports/termly?class_id=${cls.id}&year=${cls.year}&term=1`)).school.colour, '#7a1f2b');
+  for (const bad of ['red', '#fff', '#ffff00', '#f5c542', 'url(x)', '#1f7a4d;color:red']) {
+    assert.equal((await admin('PATCH', '/api/school', { colour: bad })).status, 400, bad);
+  }
+  ok(await admin('PATCH', '/api/school', { colour: '#1f7a4d' }));
+});
+
 test('getting started checklist reflects what the school has done', async () => {
   fake.users.set('new-admin', { id: 'u-new', email: 'head@newschool.ac.ke' });
   const fresh = as('new-admin');

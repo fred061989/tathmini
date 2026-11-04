@@ -121,6 +121,31 @@ async function loadMe() {
   S.isOwner = me.is_owner;
   $('#who').textContent = me.staff ? `${me.staff.full_name}${me.is_owner ? ' · owner' : ''}` : `${me.user.email}${me.is_owner ? ' · owner' : ''}`;
   $('#school-name').textContent = me.school?.name || '';
+  applySchoolColour();
+}
+
+// ---------- School colour ----------
+// One colour, chosen in Settings, used on report forms and (in light mode) for the app's buttons and links.
+const DEFAULT_COLOUR = '#1f7a4d';
+const COLOUR_PRESETS = [['Green', '#1f7a4d'], ['Maroon', '#7a1f2b'], ['Navy', '#1f3a7a'], ['Royal blue', '#1d4ed8'], ['Purple', '#5b2a86'],
+  ['Brown', '#6b4423'], ['Red', '#b3261e'], ['Teal', '#0f6e6e'], ['Black', '#222222']];
+function mix(hex, other, t) {
+  const a = [1, 3, 5].map(i => parseInt(hex.slice(i, i + 2), 16));
+  const b = [1, 3, 5].map(i => parseInt(other.slice(i, i + 2), 16));
+  return '#' + a.map((v, i) => Math.round(v + (b[i] - v) * t).toString(16).padStart(2, '0')).join('');
+}
+// CSS variables for a colour: the colour itself, a darker shade for headings and two light tints for table headers.
+function colourVars(hex = DEFAULT_COLOUR) {
+  const c = /^#[0-9a-f]{6}$/i.test(hex || '') ? hex.toLowerCase() : DEFAULT_COLOUR;
+  return `--sc:${c};--sc-dark:${mix(c, '#000000', 0.3)};--sc-weak:${mix(c, '#ffffff', 0.89)};--sc-weaker:${mix(c, '#ffffff', 0.94)}`;
+}
+function applySchoolColour() {
+  const root = document.documentElement.style;
+  const c = S.school?.colour;
+  const dark = matchMedia('(prefers-color-scheme: dark)').matches;
+  if (!c || dark) { root.removeProperty('--accent'); root.removeProperty('--accent-weak'); return; }
+  root.setProperty('--accent', c);
+  root.setProperty('--accent-weak', mix(c, '#ffffff', 0.88));
 }
 
 const TABS = [['dashboard', 'Assessments'], ['new', 'New assessment'], ['results', 'Class results'], ['reports', 'Report forms'],
@@ -634,7 +659,7 @@ function reportForm(x, r) {
   const extra = [];
   if (x.co_curricular) extra.push(`<div><b>Co-curricular:</b> ${esc(x.co_curricular)}</div>`);
   return `
-  <section class="rf">
+  <section class="rf" style="${colourVars(sch.colour)}">
     <div class="head">
       ${sch.logo ? `<img class="logo" src="${esc(sch.logo)}" alt="">` : `<div class="crest">${esc(crest)}</div>`}
       <div class="school"><div class="name">${esc(sch.name)}</div>${meta ? `<div class="meta">${meta}</div>` : ''}${sch.motto ? `<div class="motto">“${esc(sch.motto)}”</div>` : ''}</div>
@@ -1144,6 +1169,14 @@ async function renderSettings() {
         <p><button>Save</button></p>
       </form>
       <div id="m"></div>
+      <h2>School colour</h2>
+      <p class="muted">Used on report forms (name, headings, band) and for buttons in the app.</p>
+      <form id="cf" class="row">
+        ${COLOUR_PRESETS.map(([n, c]) => `<button type="button" class="swatch${(s.colour || DEFAULT_COLOUR) === c ? ' on' : ''}" data-colour="${c}" title="${n}" aria-label="${n}" style="background:${c}"></button>`).join('')}
+        <label class="row" style="gap:6px">Other <input type="color" id="colour" value="${esc(s.colour || DEFAULT_COLOUR)}"></label>
+        <span class="rf-band-preview" id="cprev" style="${colourVars(s.colour)}">${esc(s.name)}</span>
+      </form>
+      <div id="cm"></div>
       <h2>School logo</h2>
       <div class="row">
         ${s.logo ? `<img src="${esc(s.logo)}" alt="School logo" style="width:72px;height:72px;object-fit:contain;border:1px solid var(--border);border-radius:8px;background:#fff">` : '<span class="muted">No logo yet: report forms show the school\'s initials.</span>'}
@@ -1198,6 +1231,18 @@ async function renderSettings() {
       route();
     } catch (err) { notice($('#lm'), err); }
   };
+  const saveColour = async colour => {
+    try {
+      await api('PATCH', '/api/school', { colour });
+      await loadMe();
+      $('#cprev').setAttribute('style', colourVars(colour));
+      $$('[data-colour]').forEach(x => x.classList.toggle('on', x.dataset.colour === colour));
+      $('#colour').value = colour;
+      notice($('#cm'), null, 'School colour saved.');
+    } catch (err) { notice($('#cm'), err); }
+  };
+  $$('[data-colour]').forEach(b => { b.onclick = () => saveColour(b.dataset.colour); });
+  $('#colour').onchange = e => saveColour(e.target.value);
   if ($('#nologo')) $('#nologo').onclick = action($('#nologo'), $('#lm'), async () => { await api('PATCH', '/api/school', { logo: null }); await loadMe(); route(); });
   if ($('#gcon')) $('#gcon').onclick = action($('#gcon'), $('#gm'), async () => { location.href = (await api('GET', '/api/google/connect')).url; });
   if ($('#gdis')) $('#gdis').onclick = action($('#gdis'), $('#gm'), async () => { await api('POST', '/api/google/disconnect'); route(); });
