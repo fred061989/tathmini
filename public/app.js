@@ -378,10 +378,11 @@ async function renderAssessment(id) {
       ${s ? `<a class="btn secondary" href="#results?class=${a.class_id}&term=${a.term}&year=${a.year}">Class results for the term</a>` : ''}
     </div>
     ${closed ? `<p class="notice">Term ${a.term} ${a.year} is closed, so these results are locked.</p>` : ''}
-    ${notOnSheet.length && !closed ? `<div class="notice" style="margin-top:12px">${notOnSheet.length} learner(s) were paid for after the sheet was sent:
-      ${esc(notOnSheet.map(l => l.name).join(', '))}. <button class="secondary" id="addrows">Add them to the teacher's sheet</button></div>` : ''}
-    ${unpaid.length ? `<div class="notice error" style="margin-top:12px">${unpaid.length} learner(s) in this class are not paid for Term ${a.term} ${a.year}, so they are
-      not on the teacher's sheet: ${esc(unpaid.map(l => l.name).join(', '))}. <a href="#settings?term=${a.term}&year=${a.year}">Pay for them</a>, then add them to the sheet here.</div>` : ''}
+    ${notOnSheet.length && !closed ? `<div class="notice error" style="margin-top:12px">${notOnSheet.length} paid learner(s) could not be added to the teacher's sheet automatically:
+      ${esc(notOnSheet.map(l => l.name).join(', '))}. <button class="secondary" id="addrows">Try again</button></div>` : ''}
+    ${unpaid.length ? `<div class="notice error" style="margin-top:12px">${unpaid.length} learner(s) in this class are not paid for Term ${a.term} ${a.year}, so no scores can be
+      entered for them and they are not on the teacher's sheet: ${esc(unpaid.map(l => l.name).join(', '))}.
+      <a href="#settings?term=${a.term}&year=${a.year}">Pay for them</a>: they are then added to the teacher's sheet automatically.</div>` : ''}
     <div id="m" style="margin-top:12px"></div>
     <div id="grid"></div>
     <p class="muted">Scored on: ${components.map(c => `${esc(c.label)} (/${Number(c.max_score)})`).join(', ')}</p>
@@ -395,7 +396,7 @@ async function renderAssessment(id) {
       notice(m, null, `${p.entered} of ${p.total} learners entered by ${a.staff?.full_name || 'the teacher'}${p.partial ? ` (${p.partial} more partly filled in)` : ''}${p.complete ? ' — ready to analyse.' : '.'}${p.issues.length ? ' ' + p.issues.join(' ') : ''}`);
     });
   }
-  if ($('#type')) $('#type').onclick = () => scoreGrid($('#grid'), a, components, learners, scores);
+  if ($('#type')) $('#type').onclick = () => scoreGrid($('#grid'), a, components, learners, scores, unpaid);
   if ($('#addrows')) {
     $('#addrows').onclick = action($('#addrows'), m, async () => {
       const out = await api('POST', `/api/assessments/${id}/sheet/learners`, {});
@@ -427,7 +428,7 @@ function dueText(a) {
 }
 
 // Typing scores in the app: a backup when a teacher cannot use the Google Sheet.
-function scoreGrid(box, a, components, learners, saved) {
+function scoreGrid(box, a, components, learners, saved, unpaid = []) {
   const key = (l, c) => `${l}:${c}`;
   const savedOf = new Map(saved.map(x => [key(x.learner_id, x.component_id), x]));
   const first = components[0];
@@ -447,7 +448,10 @@ function scoreGrid(box, a, components, learners, saved) {
               value="${esc(savedOf.get(key(l.id, c.id))?.raw_score ?? '')}" style="width:80px"></td>`).join('')}
             <td><input type="checkbox" data-absent ${firstSaved?.absent ? 'checked' : ''}></td>
             <td><input data-comment value="${esc(firstSaved?.comment || '')}" maxlength="300" style="min-width:220px"></td></tr>`;
-        }).join('') || `<tr><td colspan="${components.length + 3}" class="muted">No learners paid for this term in this class.</td></tr>`}</tbody>
+        }).join('')}
+        ${unpaid.map(l => `<tr class="unpaid"><td>${esc(l.name)}</td><td colspan="${components.length + 2}" class="muted">Not paid for Term ${a.term} ${a.year}: scores cannot be entered.
+          <a href="#settings?term=${a.term}&year=${a.year}">Pay</a></td></tr>`).join('')}
+        ${learners.length || unpaid.length ? '' : `<tr><td colspan="${components.length + 3}" class="muted">No learners in this class.</td></tr>`}</tbody>
       </table></div>
       <p class="row"><button>Save and analyse</button><button type="button" class="secondary" data-close>Close</button></p></form>
       <div data-msg></div>
@@ -1455,7 +1459,9 @@ async function payPrompt(box, learnerIds, message, period = {}) {
       form.onsubmit = action($('button', form), msg, async () => {
         const out = await api('POST', '/api/billing/pay', { learner_ids: learnerIds, term, year, plan, mpesa_code: $('[name=code]', form).value });
         box.innerHTML = `<div class="notice">Thank you. ${out.learners} learner${out.learners === 1 ? ' is' : 's are'} now paid for (${money(out.amount_cents)},
-          M-Pesa ${esc(out.payment.mpesa_code)}). The Tathmini team will check the payment.</div>`;
+          M-Pesa ${esc(out.payment.mpesa_code)}). The Tathmini team will check the payment.
+          ${out.sheets_updated ? ` They were added to ${out.sheets_updated} teacher's sheet${out.sheets_updated === 1 ? '' : 's'} already sent.` : ''}</div>
+          ${out.sheet_errors?.length ? `<div class="notice error">Some sheets could not be updated (open the assessment to try again): ${esc(out.sheet_errors.join('; '))}</div>` : ''}`;
       });
     };
   });
@@ -1487,8 +1493,8 @@ async function renderHelp() {
       <li><b>Strands over the term:</b> list the strands for the term (e.g. strands 1–4) in one assessment and set <b>Teachers enter scores by</b>
         (e.g. the end of term). The teacher fills in each strand as it is taught and assessed. At the end, press Analyse: the marks are added up
         (marks scored ÷ marks possible) into a percentage and a CBC level.</li>
-      <li><b>Only paid-for learners</b> are on teachers' sheets. If you pay for a learner later, open the assessment and press
-        <b>Add them to the teacher's sheet</b>: they are added at the bottom of the same sheet.</li>
+      <li><b>Only paid-for learners</b> get scores. Unpaid learners are listed, but no scores can be entered for them and they are not on
+        teachers' sheets. When you pay for a learner later, they are added automatically to the bottom of every sheet already sent for that term.</li>
       <li>Each teacher receives an email from Google with their sheet. They type marks, put <b>Y</b> under Absent for absent learners, and may add a short
         comment for each learner, which appears on the report form. Names are locked, and marks above the maximum are refused.</li>
       <li>A teacher who cannot use Google Sheets can give you the marks on paper: open the assessment and press <b>Enter scores here</b>.</li>

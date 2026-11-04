@@ -448,13 +448,15 @@ test('only paid learners get a sheet row; learners paid later are added; the tea
   assert.deepEqual(created[created.length - 1].learners.map(l => l.first_name), ['Pendo']);
   let detail = ok(await admin('GET', `/api/assessments/${a.id}`));
   assert.deepEqual([detail.unpaid.map(l => l.name), detail.not_on_sheet], [['Rehema Juma'], []]);
-  // Once paid for, she can be added to the bottom of the same sheet
-  ok(await admin('POST', '/api/billing/pay', { learner_ids: [rehema], year, term: 1, plan: 'term', mpesa_code: 'WST0000002' }));
-  detail = ok(await admin('GET', `/api/assessments/${a.id}`));
-  assert.deepEqual([detail.unpaid, detail.not_on_sheet.map(l => l.name)], [[], ['Rehema Juma']]);
-  assert.deepEqual(ok(await admin('POST', `/api/assessments/${a.id}/sheet/learners`, {})).learners, ['Rehema Juma']);
+  // Scores typed for an unpaid learner are ignored
+  const typed = ok(await admin('POST', `/api/assessments/${a.id}/analyse`, { scores: detail.components.flatMap(c => [pendo, rehema].map(l => ({ learner_id: l, component_id: c.id, raw_score: '10' }))) }));
+  assert.deepEqual(typed.results.map(r => r.learner_id), [pendo]);
+  // Once paid for, she is added to the bottom of the same sheet automatically
+  const paid = ok(await admin('POST', '/api/billing/pay', { learner_ids: [rehema], year, term: 1, plan: 'term', mpesa_code: 'WST0000002' }));
+  assert.equal(paid.sheets_updated, 1);
   assert.deepEqual(appended[appended.length - 1].learners.map(l => l.first_name), ['Rehema']);
-  assert.deepEqual(ok(await admin('GET', `/api/assessments/${a.id}`)).not_on_sheet, []);
+  detail = ok(await admin('GET', `/api/assessments/${a.id}`));
+  assert.deepEqual([detail.unpaid, detail.not_on_sheet], [[], []]);
   assert.equal(ok(await admin('POST', `/api/assessments/${a.id}/sheet/learners`, {})).added, 0);
 
   // The teacher marked the first strand out of 50 instead of 20 (row 2 of the sheet)

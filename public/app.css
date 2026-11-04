@@ -153,3 +153,4 @@ input[type=color] { width: 40px; height: 30px; padding: 0 2px; border: 1px solid
 }
 
 tr.out-of td { background: var(--accent-weak); }
+tr.unpaid td { background: var(--surface); opacity: .75; }
