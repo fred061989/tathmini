@@ -7,15 +7,16 @@ const SINGULAR = { classes: 'class', learning_areas: 'learning_area', learners: 
 const ONE_TO_MANY = new Set(['classes.learners', 'learning_areas.strands', 'strands.sub_strands']);
 const DEFAULT_FK = { staff: 'teacher_id' };
 const KEYS = { scores: ['assessment_id', 'learner_id', 'component_id'], results: ['assessment_id', 'learner_id'], learner_terms: ['learner_id', 'year', 'term'], report_comments: ['learner_id', 'year', 'term'] };
-const IDENTITY = new Set(['account_ledger']);
-const CASCADE = { assessments: [['results', 'assessment_id'], ['scores', 'assessment_id'], ['assessment_components', 'assessment_id']] };
+const IDENTITY = new Set();
+const CASCADE = { payments: [['learner_terms', 'payment_id']], assessments: [['results', 'assessment_id'], ['scores', 'assessment_id'], ['assessment_components', 'assessment_id']] };
 const DEFAULTS = {
-  schools: { grading: {}, balance_cents: 0, google_refresh_token: null },
+  schools: { grading: {}, colour: '#1f7a4d', assessment_style: 'exams', google_refresh_token: null },
+  payments: { status: 'pending' },
   staff: { active: true, user_id: null },
   learners: { active: true },
   assessments: { status: 'draft', per_strand: false },
 };
-const UNIQUE = { learners: ['school_id', 'adm_no'], teacher_assignments: ['class_id', 'learning_area_id'], terms: ['school_id', 'year', 'term'] };
+const UNIQUE = { payments: ['mpesa_code'], learner_terms: ['learner_id', 'year', 'term'], learners: ['school_id', 'adm_no'], teacher_assignments: ['class_id', 'learning_area_id'], terms: ['school_id', 'year', 'term'] };
 
 function splitTop(s) {
   const out = [];
@@ -151,20 +152,7 @@ function createFake() {
     store,
     users,
     from: table => new Query(store, table),
-    rpc: async (name, args) => {
-      const school = (store.schools || []).find(x => x.id === args.p_school);
-      if (!school) return { data: null, error: null };
-      if (name === 'consume_balance') {
-        if (school.balance_cents < args.p_cents) return { data: null, error: null };
-        school.balance_cents -= args.p_cents;
-        return { data: school.balance_cents, error: null };
-      }
-      if (name === 'add_balance') {
-        school.balance_cents = Math.max(school.balance_cents + args.p_cents, 0);
-        return { data: school.balance_cents, error: null };
-      }
-      return { data: null, error: { message: `unknown function ${name}` } };
-    },
+    rpc: async name => ({ data: null, error: { message: `unknown function ${name}` } }),
     auth: {
       getUser: async token => (users.has(token) ? { data: { user: users.get(token) }, error: null } : { data: null, error: { message: 'bad token' } }),
       admin: { inviteUserByEmail: async () => ({ data: {}, error: null }) },

@@ -98,29 +98,48 @@ test('Phase 1 flow', async (t) => {
     let billing = ok(await admin('GET', `/api/billing?year=${YEAR}&term=1`));
     assert.deepEqual([billing.unpaid.length, billing.quotes.term, billing.quotes.year], [3, 6000, 15000]);
 
-    // Not enough balance: nothing is paid
-    const short = await admin('POST', '/api/billing/pay', { learner_ids: 'unpaid', year: YEAR, term: 1, plan: 'year' });
-    assert.equal(short.status, 402);
-    assert.match(short.body.error, /Paying for 3 learners \(\d+\) costs KES 150, but the account balance is KES 0/);
-    assert.equal(ok(await owner('POST', `/api/owner/schools/${fake.store.schools[0].id}/balance`, { amount_kes: 500, reason: 'M-Pesa QJK2X7' })).balance_cents, 50000);
+    // Paying needs the M-Pesa code; a wrong-looking code is refused and nothing is paid
+    const bad = await admin('POST', '/api/billing/pay', { learner_ids: 'unpaid', year: YEAR, term: 1, plan: 'year', mpesa_code: '12' });
+    assert.equal(bad.status, 400);
+    assert.match(bad.body.error, /10-character M-Pesa code/);
+    assert.equal(billing.pay_to.account, `TM${fake.store.schools[0].id.replace(/-/g, '').slice(0, 6).toUpperCase()}`);
 
     // Two learners for the whole year, one (joined mid-term) for just Term 1
     const [amani, baraka, chebet] = saved.added_ids;
     const q = ok(await admin('POST', '/api/billing/quote', { learner_ids: [amani, baraka], year: YEAR, term: 1, plan: 'year' }));
     assert.deepEqual([q.learners, q.total_cents], [2, 10000]);
-    const yearPay = ok(await admin('POST', '/api/billing/pay', { learner_ids: [amani, baraka], year: YEAR, term: 1, plan: 'year' }));
-    assert.deepEqual([yearPay.charged_cents, yearPay.balance_cents], [10000, 40000]);
-    const termPay = ok(await admin('POST', '/api/billing/pay', { learner_ids: [chebet], year: YEAR, term: 1, plan: 'term' }));
-    assert.equal(termPay.charged_cents, 2000);
-    // Paying again changes nothing; Chebet's rest of the year costs 2 × 20 = 40, not 50
-    assert.equal(ok(await admin('POST', '/api/billing/pay', { learner_ids: 'unpaid', year: YEAR, term: 1, plan: 'year' })).charged_cents, 4000);
+    const yearPay = ok(await admin('POST', '/api/billing/pay', { learner_ids: [amani, baraka], year: YEAR, term: 1, plan: 'year', mpesa_code: 'qjk2x7ab9c' }));
+    assert.deepEqual([yearPay.amount_cents, yearPay.payment.mpesa_code, yearPay.payment.status], [10000, 'QJK2X7AB9C', 'pending']);
+    // The same M-Pesa code cannot be used twice
+    assert.equal((await admin('POST', '/api/billing/pay', { learner_ids: [chebet], year: YEAR, term: 1, plan: 'term', mpesa_code: 'QJK2X7AB9C' })).status, 409);
+    const termPay = ok(await admin('POST', '/api/billing/pay', { learner_ids: [chebet], year: YEAR, term: 1, plan: 'term', mpesa_code: 'QJK2X7AB9D' }));
+    assert.equal(termPay.amount_cents, 2000);
+    // Already paid: nothing to pay
+    assert.equal((await admin('POST', '/api/billing/pay', { learner_ids: [amani], year: YEAR, term: 1, plan: 'term', mpesa_code: 'QJK2X7AB9E' })).status, 400);
+    // Chebet's rest of the year costs 2 × 20 = 40, not 50
+    const rest = ok(await admin('POST', '/api/billing/pay', { learner_ids: 'unpaid', year: YEAR, term: 1, plan: 'year', mpesa_code: 'QJK2X7AB9F' }));
+    assert.equal(rest.amount_cents, 4000);
     assert.equal(ok(await admin('GET', `/api/billing?year=${YEAR}&term=3`)).unpaid.length, 0);
     // Someone else's learner cannot be paid for through this school
     assert.equal((await admin('POST', '/api/billing/quote', { learner_ids: ['not-mine'], year: YEAR, term: 1, plan: 'term' })).status, 400);
 
+    // The owner checks payments against the M-Pesa statement
+    const waiting = ok(await owner('GET', '/api/owner/payments?status=pending'));
+    assert.deepEqual(waiting.map(p => p.mpesa_code).sort(), ['QJK2X7AB9C', 'QJK2X7AB9D', 'QJK2X7AB9F']);
+    assert.equal(waiting[0].schools.name, 'Kilimani Junior School');
+    ok(await owner('POST', `/api/owner/payments/${yearPay.payment.id}/confirm`, {}));
+    // A code with no M-Pesa payment behind it: rejecting it locks Chebet's terms again
+    ok(await owner('POST', `/api/owner/payments/${rest.payment.id}/reject`, { note: 'Not on statement' }));
+    billing = ok(await admin('GET', `/api/billing?year=${YEAR}&term=2`));
+    assert.deepEqual(billing.unpaid.map(l => l.name), ['Chebet Kiprop']);
+    assert.equal((await admin('POST', `/api/owner/payments/${termPay.payment.id}/confirm`, {})).status, 403);
+    ok(await owner('POST', `/api/owner/payments/${termPay.payment.id}/confirm`, {}));
+
     billing = ok(await admin('GET', `/api/billing?year=${YEAR}&term=1`));
-    assert.deepEqual([billing.balance_cents, billing.paid, billing.prices.term_cents, billing.prices.year_cents], [34000, 3, 2000, 5000]);
-    assert.deepEqual(billing.ledger.map(l => l.kind), ['learner_fee', 'learner_fee', 'learner_fee', 'payment']);
+    assert.deepEqual([billing.paid, billing.prices.term_cents, billing.prices.year_cents], [3, 2000, 5000]);
+    assert.deepEqual(billing.payments.map(p => [p.description, p.status]),
+      [[`${YEAR} for 1 learner`, 'rejected'], [`Term 1 ${YEAR} for 1 learner`, 'confirmed'], [`${YEAR} for 2 learners`, 'confirmed']]);
+    assert.equal(billing.payments[0].note, 'Not on statement');
   });
 
   await t.test('teachers are assigned learning areas taught in the grade', async () => {
@@ -226,7 +245,7 @@ test('Phase 1 flow', async (t) => {
     const out = ok(await admin('POST', '/api/assessments', { assignment_ids: [asg.id], kind: 'weekly', year: YEAR + 1, term: 1, max_score: 10 }));
     assert.match(out.created[0].note, /no learners paid for Term 1/);
     const schools = ok(await owner('GET', '/api/owner/schools'));
-    assert.deepEqual([schools[0].name, schools[0].learners, schools[0].balance_cents], ['Kilimani Junior School', 3, 34000]);
+    assert.deepEqual([schools[0].name, schools[0].learners, schools[0].confirmed_cents, schools[0].pending_cents], ['Kilimani Junior School', 3, 12000, 0]);
     assert.equal((await admin('GET', '/api/owner/schools')).status, 403);
   });
 });
@@ -301,7 +320,7 @@ test('scores typed in the app (no Google Sheet) are analysed and reach the repor
   const cls = ok(await admin('POST', '/api/classes', { grade: 7, stream: 'South', year: new Date().getFullYear() }));
   const added = ok(await admin('POST', '/api/learners', { class_id: cls.id, learners: [
     { adm_no: '301', first_name: 'Neema', last_name: 'Wairimu' }, { adm_no: '302', first_name: 'Omondi', last_name: 'Ochieng' }] }));
-  ok(await admin('POST', '/api/billing/pay', { learner_ids: added.added_ids, year: cls.year, term: 2, plan: 'term' }));
+  ok(await admin('POST', '/api/billing/pay', { learner_ids: added.added_ids, year: cls.year, term: 2, plan: 'term', mpesa_code: 'RBX1234567' }));
   const eng = ok(await admin('GET', '/api/curriculum')).find(a => a.name === 'English');
   const janet = fake.store.staff.find(s => s.full_name === 'Janet Wanjiku');
   const asg = ok(await admin('POST', '/api/assignments', { teacher_id: janet.id, class_id: cls.id, learning_area_id: eng.id }));
@@ -384,7 +403,6 @@ test('security: input checks, sign-in state, other schools', async () => {
   assert.equal((await admin('POST', '/api/assessments', { assignment_ids: [asg.id], kind: 'monthly', term: 1, year: cls.year, max_score: 5000 })).status, 400);
   assert.equal((await admin('PUT', '/api/terms', { year: cls.year, term: 1, closing_date: '<script>' })).status, 400);
   assert.equal((await admin('POST', '/api/billing/quote', { learner_ids: 'everyone', year: cls.year, term: 1, plan: 'term' })).status, 400);
-  assert.equal((await owner('POST', `/api/owner/schools/${fake.store.schools[0].id}/balance`, { amount_kes: 1e12 })).status, 400);
   assert.equal((await admin('PUT', '/api/report-comments', { learner_id: fake.store.learners[0].id, year: cls.year, term: 9 })).status, 400);
 
   // Another school's admin cannot see or touch this school's records

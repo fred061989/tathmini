@@ -33,7 +33,8 @@ label { display: flex; flex-direction: column; gap: 4px; font-size: 13px; color:
 label.check { flex-direction: row; align-items: center; gap: 8px; color: var(--text); }
 input, select, textarea { font: inherit; padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); color: var(--text); min-width: 0; }
 textarea { width: 100%; min-height: 110px; }
-textarea.mono { font-family: ui-monospace, monospace; font-size: 13px; }
+.mono { font-family: ui-monospace, monospace; }
+textarea.mono { font-size: 13px; }
 button, .btn { font: inherit; padding: 8px 14px; border-radius: 8px; border: 1px solid var(--accent); background: var(--accent); color: #fff; cursor: pointer; text-decoration: none; display: inline-block; }
 @media (prefers-color-scheme: dark) { button, .btn { color: #0d1410; } }
 button.secondary, .btn.secondary { background: transparent; color: var(--accent); }

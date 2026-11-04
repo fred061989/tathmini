@@ -18,7 +18,8 @@ CREATE TABLE IF NOT EXISTS schools (
   grading JSONB NOT NULL DEFAULT '{}',   -- threshold overrides, e.g. {"cbc4":{"EE":75,"ME":50,"AE":25}}
   google_refresh_token TEXT,             -- the school's Google account (drive.file scope)
   google_email TEXT,
-  balance_cents INTEGER NOT NULL DEFAULT 0 CHECK (balance_cents >= 0),  -- prepaid balance (KES × 100)
+  colour TEXT NOT NULL DEFAULT '#1f7a4d' CHECK (colour ~ '^#[0-9a-f]{6}$'),  -- school colour on report forms and the app
+  assessment_style TEXT NOT NULL DEFAULT 'exams' CHECK (assessment_style IN ('exams', 'strands')),  -- how term results are worked out
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
@@ -168,7 +169,7 @@ CREATE TABLE IF NOT EXISTS report_comments (
   school_id UUID NOT NULL REFERENCES schools(id) ON DELETE CASCADE,
   learner_id UUID NOT NULL REFERENCES learners(id) ON DELETE CASCADE,
   year INTEGER NOT NULL,
-  term INTEGER NOT NULL,
+  term INTEGER NOT NULL CHECK (term BETWEEN 0 AND 3),   -- 0 = the end-of-year report
   class_comment TEXT,
   head_comment TEXT,
   co_curricular TEXT,
@@ -176,7 +177,28 @@ CREATE TABLE IF NOT EXISTS report_comments (
   PRIMARY KEY (learner_id, year, term)
 );
 
--- Billing: each learner is paid for term by term, from a prepaid balance (amounts in cents).
+-- A payment for learners: sent by M-Pesa, recorded with its confirmation code. The learners are
+-- unlocked at once; the platform owner confirms it against the M-Pesa statement, or rejects it
+-- (which locks the learners again). There is no prepaid balance.
+CREATE TABLE IF NOT EXISTS payments (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  school_id UUID NOT NULL REFERENCES schools(id) ON DELETE CASCADE,
+  year INTEGER NOT NULL,
+  term INTEGER NOT NULL CHECK (term BETWEEN 1 AND 3),
+  plan TEXT NOT NULL CHECK (plan IN ('term', 'year')),
+  learners INTEGER NOT NULL,
+  amount_cents INTEGER NOT NULL CHECK (amount_cents > 0),
+  description TEXT NOT NULL,
+  mpesa_code TEXT NOT NULL UNIQUE,       -- from the M-Pesa confirmation SMS; each code is used once
+  status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'confirmed', 'rejected')),
+  note TEXT,
+  created_by TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  checked_by TEXT,
+  checked_at TIMESTAMPTZ
+);
+
+-- Billing: each learner is paid for term by term (amounts in cents).
 -- KES 20 per term, or KES 50 for the year (all three terms).
 CREATE TABLE IF NOT EXISTS learner_terms (
   learner_id UUID NOT NULL REFERENCES learners(id) ON DELETE CASCADE,
@@ -185,36 +207,10 @@ CREATE TABLE IF NOT EXISTS learner_terms (
   term INTEGER NOT NULL CHECK (term BETWEEN 1 AND 3),
   plan TEXT NOT NULL CHECK (plan IN ('term', 'year')),
   fee_cents INTEGER NOT NULL,
+  payment_id UUID REFERENCES payments(id) ON DELETE CASCADE,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   PRIMARY KEY (learner_id, year, term)
 );
-
-CREATE TABLE IF NOT EXISTS account_ledger (
-  id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,   -- increasing, so entries keep their exact order
-  school_id UUID NOT NULL REFERENCES schools(id) ON DELETE CASCADE,
-  change_cents INTEGER NOT NULL,
-  balance_after_cents INTEGER NOT NULL,
-  kind TEXT NOT NULL CHECK (kind IN ('payment', 'learner_fee', 'refund', 'adjustment')),
-  reason TEXT NOT NULL,
-  created_by TEXT,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
-);
-
--- Takes money only if the balance covers it; returns the new balance, or NULL if it does not.
-CREATE OR REPLACE FUNCTION consume_balance(p_school UUID, p_cents INTEGER) RETURNS INTEGER
-LANGUAGE sql AS $$
-  UPDATE schools SET balance_cents = balance_cents - p_cents
-  WHERE id = p_school AND balance_cents >= p_cents
-  RETURNING balance_cents;
-$$;
-
--- Adds money (negative to correct); never goes below zero.
-CREATE OR REPLACE FUNCTION add_balance(p_school UUID, p_cents INTEGER) RETURNS INTEGER
-LANGUAGE sql AS $$
-  UPDATE schools SET balance_cents = GREATEST(balance_cents + p_cents, 0)
-  WHERE id = p_school
-  RETURNING balance_cents;
-$$;
 
 CREATE INDEX IF NOT EXISTS idx_staff_school ON staff(school_id);
 CREATE INDEX IF NOT EXISTS idx_staff_email ON staff(lower(email));
@@ -228,7 +224,9 @@ CREATE INDEX IF NOT EXISTS idx_assess_class_term ON assessments(class_id, year, 
 CREATE INDEX IF NOT EXISTS idx_components_assess ON assessment_components(assessment_id);
 CREATE INDEX IF NOT EXISTS idx_results_learner ON results(learner_id);
 CREATE INDEX IF NOT EXISTS idx_learner_terms_school ON learner_terms(school_id, year, term);
-CREATE INDEX IF NOT EXISTS idx_ledger_school ON account_ledger(school_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_learner_terms_payment ON learner_terms(payment_id);
+CREATE INDEX IF NOT EXISTS idx_payments_school ON payments(school_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_payments_status ON payments(status);
 
 ALTER TABLE schools ENABLE ROW LEVEL SECURITY;
 ALTER TABLE staff ENABLE ROW LEVEL SECURITY;
@@ -245,4 +243,4 @@ ALTER TABLE results ENABLE ROW LEVEL SECURITY;
 ALTER TABLE terms ENABLE ROW LEVEL SECURITY;
 ALTER TABLE report_comments ENABLE ROW LEVEL SECURITY;
 ALTER TABLE learner_terms ENABLE ROW LEVEL SECURITY;
-ALTER TABLE account_ledger ENABLE ROW LEVEL SECURITY;
+ALTER TABLE payments ENABLE ROW LEVEL SECURITY;

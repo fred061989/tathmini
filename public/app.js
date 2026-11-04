@@ -190,12 +190,12 @@ async function renderDashboard() {
           ${st.done ? `<span class="muted">${esc(st.label)}</span>` : `<a href="${st.link}">${esc(st.label)}</a>${st === next ? ' <span class="pill" style="color:var(--accent)">next</span>' : ''}`}</li>`).join('')}</ol>
     </div>`}
     ${S.school.google_connected ? '' : '<div class="notice error">Google is not connected, so score sheets cannot be sent to teachers. <a href="#settings">Connect it in Settings</a>.</div>'}
-    ${billing.unpaid.length ? `<div class="notice error">${billing.unpaid.length} learner(s) are not paid for Term ${billing.term} ${billing.year}, so they are left out of new sheets and report forms. <a href="#settings">Pay in Settings → Billing</a>.</div>` : ''}
+    ${billing.unpaid.length ? `<div class="notice error">${billing.unpaid.length} learner(s) are not paid for Term ${billing.term} ${billing.year}, so they are left out of new sheets and report forms. <a href="#settings">Pay for them in Settings → Billing</a>.</div>` : ''}
     <div class="grid">
       <div class="stat"><div class="v">${count('draft')}</div><div class="k">Drafts (no sheet yet)</div></div>
       <div class="stat"><div class="v">${count('sheet_ready')}</div><div class="k">With teachers</div></div>
       <div class="stat"><div class="v">${count('analysed')}</div><div class="k">Analysed</div></div>
-      <div class="stat"><div class="v">${money(billing.balance_cents)}</div><div class="k">Account balance</div></div>
+      <div class="stat"><div class="v">${billing.paid}/${billing.learners}</div><div class="k">Learners paid for Term ${billing.term}</div></div>
     </div>
     <div id="m" style="margin-top:12px"></div>
     <div class="table-wrap"><table>
@@ -816,9 +816,8 @@ async function renderClass(id) {
       <div id="preview"></div>
       <p class="muted">Or paste from Excel or Google Sheets, one learner per line, in this order:
         <code>adm_no, assessment_no, first_name, last_name, gender (F/M), parent_name, parent_phone</code>.
-        Existing ADM numbers are updated, e.g. when moving learners to a new class. After adding, pay for new learners from the
-        account balance (now ${money(billing.balance_cents)}): <strong>${money(billing.prices.term_cents)} per term</strong> or
-        <strong>${money(billing.prices.year_cents)} for the year</strong>.</p>
+        Existing ADM numbers are updated, e.g. when moving learners to a new class. After adding, you can pay for the new learners by M-Pesa:
+        <strong>${money(billing.prices.term_cents)} per term</strong> or <strong>${money(billing.prices.year_cents)} for the year</strong> per learner.</p>
       <textarea id="csv" class="mono" placeholder="1021, A001021, Amani, Otieno, F, Grace Otieno, 0712345678"></textarea>
       <p><button id="import">Add learners</button></p>
       <div id="m"></div>
@@ -1156,23 +1155,26 @@ async function renderSettings() {
     <div class="card">
       <h2 style="margin-top:0">Billing</h2>
       <div class="grid">
-        <div class="stat"><div class="v">${money(b.balance_cents)}</div><div class="k">Account balance</div></div>
         <div class="stat"><div class="v">${b.paid}/${b.learners}</div><div class="k">Learners paid for Term ${b.term} ${b.year}</div></div>
         <div class="stat"><div class="v">${money(b.prices.term_cents)} / ${money(b.prices.year_cents)}</div><div class="k">Per learner: one term / whole year</div></div>
       </div>
-      <p class="muted">To add to the balance, pay the Tathmini team (e.g. by M-Pesa); they credit your account and it shows below.
-        Paying for the year after some terms are paid only charges for the terms left (never more than ${money(b.prices.year_cents)} a year).</p>
+      <p class="muted">Pay for one learner, or for all unpaid learners at once, by M-Pesa. Paying for the year after some terms are paid
+        only charges for the terms left (never more than ${money(b.prices.year_cents)} a year per learner).</p>
       <form id="bp" class="inline">
         <label>Term <select name="term">${[1, 2, 3].map(t => `<option value="${t}" ${t === b.term ? 'selected' : ''}>Term ${t}</option>`).join('')}</select></label>
         <label>Year <input name="year" type="number" value="${b.year}" style="width:90px"></label>
         <button class="secondary">Show</button>
       </form>
       <div id="bpay" style="margin-top:12px"></div>
+      ${b.unpaid.length > 1 ? `<details style="margin-bottom:12px"><summary>Pay for one learner only</summary>
+        <form id="one" class="inline" style="margin-top:8px"><label>Learner <select name="learner">${b.unpaid.map(l => `<option value="${l.id}">${esc(l.name)}${l.adm_no ? ` (ADM ${esc(l.adm_no)})` : ''}</option>`).join('')}</select></label>
+        <button class="secondary">Choose</button></form><div id="onepay" style="margin-top:8px"></div></details>` : ''}
       <div id="bm"></div>
-      ${b.ledger.length ? `<h2>Account activity</h2><div class="table-wrap"><table>
-        <thead><tr><th>Date</th><th>Details</th><th class="num">Amount</th><th class="num">Balance</th></tr></thead>
-        <tbody>${b.ledger.map(l => `<tr><td>${esc(new Date(l.created_at).toLocaleDateString('en-KE'))}</td><td>${esc(l.reason)}</td>
-          <td class="num">${l.change_cents > 0 ? '+' : '−'}${money(Math.abs(l.change_cents))}</td><td class="num">${money(l.balance_after_cents)}</td></tr>`).join('')}</tbody></table></div>` : ''}
+      ${b.payments.length ? `<h2>Payments</h2><div class="table-wrap"><table>
+        <thead><tr><th>Date</th><th>For</th><th>M-Pesa code</th><th class="num">Amount</th><th>Status</th></tr></thead>
+        <tbody>${b.payments.map(p => `<tr><td>${esc(new Date(p.created_at).toLocaleDateString('en-KE'))}</td><td>${esc(p.description)}</td>
+          <td class="mono">${esc(p.mpesa_code)}</td><td class="num">${money(p.amount_cents)}</td>
+          <td>${PAY_STATUS[p.status] || esc(p.status)}${p.note ? `<div class="muted">${esc(p.note)}</div>` : ''}</td></tr>`).join('')}</tbody></table></div>` : ''}
     </div>
     <div class="card">
       <h2 style="margin-top:0">Grading thresholds</h2>
@@ -1208,6 +1210,14 @@ async function renderSettings() {
   } else {
     $('#bpay').innerHTML = `<p class="muted">All ${b.learners} learners are paid for Term ${b.term} ${b.year}.</p>`;
   }
+  if ($('#one')) {
+    $('#one').onsubmit = e => {
+      e.preventDefault();
+      const id = $('#one [name=learner]').value;
+      const l = b.unpaid.find(x => x.id === id);
+      payPrompt($('#onepay'), [id], `Pay for ${l.name} only:`, { term: b.term, year: b.year });
+    };
+  }
   const gr = $('#gr');
   gr.onsubmit = action($('button', gr), $('#grm'), async () => {
     const grading = { cbc4: {}, cbc8: {} };
@@ -1218,7 +1228,21 @@ async function renderSettings() {
   });
 }
 
-// Offers to pay for learners by the term or the year, showing both prices first.
+const PAY_STATUS = {
+  pending: '<span class="pill" style="color:var(--warn)">Awaiting check</span>',
+  confirmed: '<span class="pill" style="color:var(--accent)">Confirmed</span>',
+  rejected: '<span class="pill" style="color:var(--danger)">Rejected</span>',
+};
+
+// How to send money by M-Pesa to the Tathmini Paybill (or, before a Paybill is set up, to the Tathmini team).
+const mpesaSteps = (payTo, cents) => (payTo.paybill
+  ? `<ol style="margin:6px 0 10px;padding-left:20px"><li>On your phone: <b>M-Pesa → Lipa na M-Pesa → Pay Bill</b>.</li>
+      <li>Business number <b class="mono">${esc(payTo.paybill)}</b>, account number <b class="mono">${esc(payTo.account)}</b>, amount <b>${money(cents)}</b>.</li>
+      <li>Type the code from the M-Pesa confirmation SMS below (e.g. QJK2X7AB9C).</li></ol>`
+  : `<p style="margin:6px 0 10px">Send <b>${money(cents)}</b> by M-Pesa to the Tathmini team, with reference <b class="mono">${esc(payTo.account)}</b>,
+      then type the code from the M-Pesa confirmation SMS below (e.g. QJK2X7AB9C).</p>`);
+
+// Offers to pay for learners by the term or the year, showing both prices first, then takes the M-Pesa code.
 // learnerIds: an array of ids, or 'unpaid' for every unpaid learner.
 async function payPrompt(box, learnerIds, message, period = {}) {
   const term = period.term || thisTerm;
@@ -1233,15 +1257,29 @@ async function payPrompt(box, learnerIds, message, period = {}) {
         ${qy.learners ? `<button data-plan="year" class="secondary">Pay for the whole of ${year} · ${money(qy.total_cents)}</button>` : ''}
         <button class="secondary" data-later>Later</button>
       </div>
+      <form data-mpesa hidden style="margin-top:12px"></form>
       <div data-msg style="margin-top:8px"></div>
     </div>`;
   const msg = $('[data-msg]', box);
+  const form = $('[data-mpesa]', box);
   $('[data-later]', box).onclick = () => { box.innerHTML = '<p class="muted">Not paid yet: these learners are left out of sheets and report forms until paid for (Settings → Billing).</p>'; };
   $$('[data-plan]', box).forEach(btn => {
-    btn.onclick = action(btn, msg, async () => {
-      const out = await api('POST', '/api/billing/pay', { learner_ids: learnerIds, term, year, plan: btn.dataset.plan });
-      box.innerHTML = `<div class="notice">Paid for ${out.learners} learner(s): ${money(out.charged_cents)}. Balance now ${money(out.balance_cents)}.</div>`;
-    });
+    btn.onclick = () => {
+      const plan = btn.dataset.plan;
+      const q = plan === 'year' ? qy : qt;
+      $$('[data-plan]', box).forEach(x => x.classList.toggle('secondary', x !== btn));
+      form.hidden = false;
+      form.innerHTML = `<strong>${plan === 'year' ? `Whole of ${year}` : `Term ${term} ${year}`}: ${q.learners} learner${q.learners === 1 ? '' : 's'}, ${money(q.total_cents)}</strong>
+        ${mpesaSteps(q.pay_to, q.total_cents)}
+        <div class="inline"><label>M-Pesa code <input name="code" class="mono" maxlength="12" required autocomplete="off" style="text-transform:uppercase;width:150px"></label>
+        <button>Confirm payment</button></div>`;
+      $('[name=code]', form).focus();
+      form.onsubmit = action($('button', form), msg, async () => {
+        const out = await api('POST', '/api/billing/pay', { learner_ids: learnerIds, term, year, plan, mpesa_code: $('[name=code]', form).value });
+        box.innerHTML = `<div class="notice">Thank you. ${out.learners} learner${out.learners === 1 ? ' is' : 's are'} now paid for (${money(out.amount_cents)},
+          M-Pesa ${esc(out.payment.mpesa_code)}). The Tathmini team will check the payment.</div>`;
+      });
+    };
   });
 }
 
@@ -1258,8 +1296,9 @@ async function renderHelp() {
       <li><a href="#settings">Settings</a>: press <b>Connect Google</b> and sign in with the school's Google account. Score sheets are created there.</li>
       <li><a href="#classes">Classes & learners</a>: add each class (grade, stream, year, class teacher).</li>
       <li>Open a class and add learners: upload an Excel file, or paste rows from Excel. Download the template if you need one.</li>
-      <li>Pay for the learners: <b>KES 20 per learner per term</b>, or <b>KES 50 per learner for the whole year</b>. The money comes from the school's
-        account balance; to top it up, pay the Tathmini team and they credit your account. Learners not paid for are left out of sheets and report forms.</li>
+      <li>Pay for the learners: <b>KES 20 per learner per term</b>, or <b>KES 50 per learner for the whole year</b>. Pay for all of them at once, or for
+        one learner who joined later. Send the amount by M-Pesa and type the M-Pesa code; the learners are unlocked at once. Learners not paid for are
+        left out of sheets and report forms.</li>
       <li><a href="#teachers">Teachers</a>: add each teacher with their <b>Gmail</b>, then say who teaches which learning area in each class.</li>
     </ol>`)}
     ${step(2, 'Give an assessment', `<ol>
@@ -1297,7 +1336,8 @@ async function renderHelp() {
     <div class="card"><h2 style="margin-top:0">Common questions</h2><ul>
       <li><b>A teacher didn't get the email?</b> Check their Gmail address on the Teachers page, and their spam folder. The sheet link is also on the assessment page.</li>
       <li><b>A teacher left?</b> On Teachers, press Remove, then give their learning areas to another teacher.</li>
-      <li><b>A learner joined mid-term?</b> Add them to the class and pay KES 20 for this term. They then appear in new sheets.</li>
+      <li><b>A learner joined mid-term?</b> Add them to the class and pay KES 20 for this term (or KES 50 for the year) for just that learner. They then appear in new sheets.</li>
+      <li><b>Payment marked "Rejected"?</b> The Tathmini team could not find that M-Pesa code. Check the code in your SMS and pay again with the right code.</li>
       <li><b>A learner left?</b> Open the class and press Remove next to their name. Their past report forms are kept.</li>
     </ul></div>`;
 }
@@ -1305,32 +1345,51 @@ async function renderHelp() {
 // ---------- Owner: all schools ----------
 
 async function renderSchools() {
-  const schools = await api('GET', '/api/owner/schools');
+  const [schools, payments] = await Promise.all([api('GET', '/api/owner/schools'), api('GET', '/api/owner/payments')]);
+  const waiting = payments.filter(p => p.status === 'pending');
   view().innerHTML = `
     <h1>All schools</h1>
     <div class="grid">
       <div class="stat"><div class="v">${schools.length}</div><div class="k">Schools</div></div>
       <div class="stat"><div class="v">${schools.reduce((n, x) => n + x.learners, 0).toLocaleString()}</div><div class="k">Learners</div></div>
       <div class="stat"><div class="v">${schools.reduce((n, x) => n + x.learners_paid_this_term, 0).toLocaleString()}</div><div class="k">Learners paid for Term ${thisTerm} ${thisYear}</div></div>
+      <div class="stat"><div class="v">${money(schools.reduce((n, x) => n + x.confirmed_cents, 0))}</div><div class="k">Confirmed payments</div></div>
     </div>
-    <div id="m" style="margin-top:12px"></div>
+    <h2>Payments to check (${waiting.length})</h2>
+    <p class="muted">Compare each code with your M-Pesa statement. Confirm it when the money is there; reject it if it is not
+      (the school's learners are then locked again and the school sees "Rejected").</p>
+    <div id="m"></div>
     <div class="table-wrap"><table>
-      <thead><tr><th>School</th><th>Contact</th><th class="num">Learners (paid this term)</th><th class="num">Balance</th><th>Record a payment or correction</th></tr></thead>
+      <thead><tr><th>Date</th><th>School (account)</th><th>For</th><th>M-Pesa code</th><th class="num">Amount</th><th>Status</th><th></th></tr></thead>
+      <tbody>${payments.map(p => `<tr>
+        <td>${esc(new Date(p.created_at).toLocaleDateString('en-KE'))}</td>
+        <td>${esc(p.schools?.name || '')}<div class="muted mono">${esc(p.account)}</div></td>
+        <td>${esc(p.description)}</td><td class="mono">${esc(p.mpesa_code)}</td><td class="num">${money(p.amount_cents)}</td>
+        <td>${PAY_STATUS[p.status] || esc(p.status)}${p.note ? `<div class="muted">${esc(p.note)}</div>` : ''}</td>
+        <td class="row" style="flex-wrap:nowrap">${p.status === 'pending' ? `<button data-confirm="${p.id}">Confirm</button>` : ''}
+          ${p.status !== 'rejected' ? `<button class="danger" data-reject="${p.id}">Reject</button>` : ''}</td>
+      </tr>`).join('') || '<tr><td colspan="7" class="muted">No payments yet.</td></tr>'}</tbody>
+    </table></div>
+    <h2>Schools</h2>
+    <div class="table-wrap"><table>
+      <thead><tr><th>School</th><th>M-Pesa account</th><th>Contact</th><th class="num">Learners (paid this term)</th><th class="num">Paid (awaiting check)</th></tr></thead>
       <tbody>${schools.map(x => `<tr>
         <td><strong>${esc(x.name)}</strong><div class="muted">${esc(x.county || '')}</div></td>
+        <td class="mono">${esc(x.account)}</td>
         <td>${esc(x.phone || '')}<div class="muted">${esc(x.email || '')}</div></td>
         <td class="num">${x.learners} <span class="muted">(${x.learners_paid_this_term})</span></td>
-        <td class="num">${money(x.balance_cents)}</td>
-        <td><form class="row" data-credit="${x.id}"><input name="amount_kes" type="number" step="1" placeholder="KES" style="width:90px" required>
-          <input name="reason" placeholder="e.g. M-Pesa QJK2X7" style="width:150px"><button class="secondary">Apply</button></form></td>
+        <td class="num">${money(x.confirmed_cents)}${x.pending_cents ? ` <span class="muted">(${money(x.pending_cents)})</span>` : ''}</td>
       </tr>`).join('') || '<tr><td colspan="5" class="muted">No schools yet.</td></tr>'}</tbody>
     </table></div>`;
-  $$('[data-credit]').forEach(form => {
-    form.onsubmit = action($('button', form), $('#m'), async () => {
-      const fd = Object.fromEntries(new FormData(form));
-      const out = await api('POST', `/api/owner/schools/${form.dataset.credit}/balance`, { amount_kes: Number(fd.amount_kes), reason: fd.reason });
-      await route();
-      setTimeout(() => notice($('#m'), null, `Balance updated: ${money(out.balance_cents)}.`), 200);
+  $$('[data-confirm]').forEach(b => {
+    b.onclick = action(b, $('#m'), async () => { await api('POST', `/api/owner/payments/${b.dataset.confirm}/confirm`, {}); route(); });
+  });
+  $$('[data-reject]').forEach(b => {
+    b.onclick = action(b, $('#m'), async () => {
+      const note = prompt('Reject this payment? The learners it paid for are locked again. Reason (shown to the school):', 'M-Pesa code not found on the statement');
+      if (note === null) return;
+      await api('POST', `/api/owner/payments/${b.dataset.reject}/reject`, { note });
+      route();
     });
   });
 }
