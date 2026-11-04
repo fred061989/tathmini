@@ -8,6 +8,7 @@ const ONE_TO_MANY = new Set(['classes.learners', 'learning_areas.strands', 'stra
 const DEFAULT_FK = { staff: 'teacher_id' };
 const KEYS = { scores: ['assessment_id', 'learner_id', 'component_id'], results: ['assessment_id', 'learner_id'], learner_terms: ['learner_id', 'year', 'term'], report_comments: ['learner_id', 'year', 'term'] };
 const IDENTITY = new Set(['account_ledger']);
+const CASCADE = { assessments: [['results', 'assessment_id'], ['scores', 'assessment_id'], ['assessment_components', 'assessment_id']] };
 const DEFAULTS = {
   schools: { grading: {}, balance_cents: 0, google_refresh_token: null },
   staff: { active: true, user_id: null },
@@ -121,7 +122,12 @@ class Query {
       return this.finish(hit.map(r => this.embed(this.table, r, this.sel)));
     }
     if (this.op === 'delete') {
+      const gone = new Set(rows.filter(r => this.matches(r)).map(r => r.id));
       this.store[this.table] = rows.filter(r => !this.matches(r));
+      // ON DELETE CASCADE, as in db/schema.sql
+      for (const [child, fk] of CASCADE[this.table] || []) {
+        if (this.store[child]) this.store[child] = this.store[child].filter(r => !gone.has(r[fk]));
+      }
       return { data: null, error: null };
     }
     // Filter and sort on full rows plus embedded relations (as Postgres does), then project.

@@ -305,6 +305,7 @@ async function renderAssessment(id) {
       ${a.status === 'sheet_ready' ? '<button class="secondary" id="progress">Check progress</button>' : ''}
       ${a.sheet_id && !closed ? `<button id="analyse">${s ? 'Re-analyse from sheet' : 'Analyse'}</button>` : ''}
       ${closed ? '' : '<button class="secondary" id="type">Enter scores here</button>'}
+      ${closed ? '' : '<span style="flex:1"></span><button class="danger" id="delete">Delete assessment</button>'}
       ${s ? `<a class="btn secondary" href="#results?class=${a.class_id}&term=${a.term}&year=${a.year}">Class results for the term</a>` : ''}
     </div>
     ${closed ? `<p class="notice">Term ${a.term} ${a.year} is closed, so these results are locked.</p>` : ''}
@@ -322,6 +323,13 @@ async function renderAssessment(id) {
     });
   }
   if ($('#type')) $('#type').onclick = () => scoreGrid($('#grid'), a, components, learners, scores);
+  if ($('#delete')) {
+    $('#delete').onclick = action($('#delete'), m, async () => {
+      if (!confirm(`Delete "${a.title}"? Its scores and results are deleted too. The Google Sheet stays in the school's Google Drive.`)) return;
+      await api('DELETE', `/api/assessments/${a.id}`);
+      location.hash = '#dashboard';
+    });
+  }
   if ($('#analyse')) {
     $('#analyse').onclick = action($('#analyse'), m, async () => {
       const out = await api('POST', `/api/assessments/${id}/analyse`, {});

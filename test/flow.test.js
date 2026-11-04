@@ -328,3 +328,16 @@ test('scores typed in the app (no Google Sheet) are analysed and reach the repor
   assert.equal(report.areas[eng.id].comment, 'Lovely handwriting.');
   assert.equal(report.areas[eng.id].average, 75);
 });
+
+test('deleting an assessment removes its results; not allowed once the term is closed', async () => {
+  const a = fake.store.assessments.find(x => x.status === 'draft' && x.term === 1 && x.year === new Date().getFullYear() + 1)
+    || fake.store.assessments.find(x => x.status === 'draft');
+  ok(await admin('DELETE', `/api/assessments/${a.id}`));
+  assert.ok(!fake.store.assessments.some(x => x.id === a.id));
+  const analysed = fake.store.assessments.find(x => x.status === 'analysed' && x.term === 2);
+  ok(await admin('POST', '/api/terms/close', { year: analysed.year, term: 2 }));
+  assert.equal((await admin('DELETE', `/api/assessments/${analysed.id}`)).status, 400);
+  ok(await admin('POST', '/api/terms/reopen', { year: analysed.year, term: 2 }));
+  ok(await admin('DELETE', `/api/assessments/${analysed.id}`));
+  assert.ok(!(fake.store.results || []).some(r => r.assessment_id === analysed.id));
+});
