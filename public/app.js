@@ -653,14 +653,21 @@ function parseLearnerRows(text) {
 async function renderClass(id) {
   const [classes, learners, staff, billing] = await Promise.all([api('GET', '/api/classes'), api('GET', `/api/learners?class_id=${id}`), api('GET', '/api/staff'), api('GET', '/api/billing')]);
   const cls = classes.find(c => c.id === id);
+  const activeStaff = staff.filter(s => s.active);
+  const nextLabel = `${gradeLabel(cls.grade + 1)}${cls.stream ? ' ' + cls.stream : ''} (${cls.year + 1})`;
   view().innerHTML = `
     <p><a href="#classes">← Classes</a></p>
     <h1>${esc(classLabel(cls))}</h1>
     <div class="card">
       <form id="ct" class="inline">
-        <label>Class teacher <select name="class_teacher_id"><option value="">–</option>${staff.map(s => `<option value="${s.id}" ${cls.class_teacher_id === s.id ? 'selected' : ''}>${esc(s.full_name)}</option>`).join('')}</select></label>
+        <label>Class teacher <select name="class_teacher_id"><option value="">–</option>${activeStaff.map(s => `<option value="${s.id}" ${cls.class_teacher_id === s.id ? 'selected' : ''}>${esc(s.full_name)}</option>`).join('')}</select></label>
         <button class="secondary">Save</button>
       </form>
+      <div class="row" style="margin-top:12px">
+        ${cls.grade < 12 && learners.length ? `<button class="secondary" id="promote">Promote all ${learners.length} to ${esc(nextLabel)}</button>` : ''}
+        ${learners.length ? '<button class="secondary" id="complete">Learners have finished school</button>' : ''}
+      </div>
+      <div id="cm" style="margin-top:8px"></div>
     </div>
     <div class="card">
       <strong>Add learners</strong>
@@ -674,13 +681,33 @@ async function renderClass(id) {
       <div id="m"></div>
       <div id="pay"></div>
     </div>
+    <h2>Learners (${learners.length})</h2>
+    <div id="lm"></div>
     <div class="table-wrap"><table>
-      <thead><tr><th>ADM</th><th>Assessment no.</th><th>Learner</th><th>Gender</th><th>Parent</th><th>Phone</th></tr></thead>
-      <tbody>${learners.map(l => `<tr><td>${esc(l.adm_no)}</td><td>${esc(l.assessment_no || '')}</td><td>${esc(l.first_name)} ${esc(l.last_name)}</td>
-        <td>${esc(l.gender || '')}</td><td>${esc(l.parent_name || '')}</td><td>${esc(l.parent_phone || '')}</td></tr>`).join('') || '<tr><td colspan="6" class="muted">No learners yet.</td></tr>'}</tbody>
+      <thead><tr><th>ADM</th><th>Assessment no.</th><th>Learner</th><th>Gender</th><th>Parent</th><th>Phone</th><th></th></tr></thead>
+      <tbody>${learners.map(l => `<tr data-row="${l.id}"><td>${esc(l.adm_no)}</td><td>${esc(l.assessment_no || '')}</td><td>${esc(l.first_name)} ${esc(l.last_name)}</td>
+        <td>${esc(l.gender || '')}</td><td>${esc(l.parent_name || '')}</td><td>${esc(l.parent_phone || '')}</td>
+        <td class="row" style="flex-wrap:nowrap"><button class="secondary" data-edit="${l.id}">Edit</button><button class="danger" data-remove="${l.id}">Remove</button></td></tr>`).join('')
+        || '<tr><td colspan="7" class="muted">No learners yet.</td></tr>'}</tbody>
     </table></div>`;
+
   const ct = $('#ct');
-  ct.onsubmit = action($('button', ct), $('#m'), async () => { await api('PATCH', `/api/classes/${id}`, Object.fromEntries(new FormData(ct))); notice($('#m'), null, 'Class teacher saved.'); });
+  ct.onsubmit = action($('button', ct), $('#cm'), async () => { await api('PATCH', `/api/classes/${id}`, Object.fromEntries(new FormData(ct))); notice($('#cm'), null, 'Class teacher saved.'); });
+  if ($('#promote')) {
+    $('#promote').onclick = action($('#promote'), $('#cm'), async () => {
+      if (!confirm(`Move all ${learners.length} learners from ${classLabel(cls)} to ${nextLabel}? Their results and this class's report forms stay available.`)) return;
+      const out = await api('POST', `/api/classes/${id}/promote`, { mode: 'promote' });
+      location.hash = `#class/${out.class.id}`;
+    });
+  }
+  if ($('#complete')) {
+    $('#complete').onclick = action($('#complete'), $('#cm'), async () => {
+      if (!confirm(`Mark all ${learners.length} learners in ${classLabel(cls)} as having finished school? They will no longer appear in lists, but their results and report forms are kept.`)) return;
+      const out = await api('POST', `/api/classes/${id}/promote`, { mode: 'complete' });
+      await route();
+      notice($('#cm'), null, `${out.completed} learner(s) marked as finished.`);
+    });
+  }
   $('#import').onclick = action($('#import'), $('#m'), async () => {
     const rows = parseLearnerRows($('#csv').value);
     if (!rows.length) throw new Error('Paste at least one learner');
@@ -688,6 +715,39 @@ async function renderClass(id) {
     await route();
     notice($('#m'), null, `${out.saved} learner(s) saved${out.added ? `, ${out.added} new` : ''}.`);
     if (out.added) payPrompt($('#pay'), out.added_ids, `You added ${out.added} new learner${out.added === 1 ? '' : 's'}. Pay now?`);
+  });
+
+  // Edit a learner in place; changing the class moves them.
+  $$('[data-edit]').forEach(b => {
+    b.onclick = () => {
+      const l = learners.find(x => x.id === b.dataset.edit);
+      const row = $(`[data-row="${l.id}"]`);
+      row.innerHTML = `<td colspan="7"><form class="inline" data-form>
+        <label>ADM <input name="adm_no" value="${esc(l.adm_no || '')}" style="width:80px"></label>
+        <label>Assessment no. <input name="assessment_no" value="${esc(l.assessment_no || '')}" style="width:110px"></label>
+        <label>First name <input name="first_name" value="${esc(l.first_name)}" required style="width:120px"></label>
+        <label>Last name <input name="last_name" value="${esc(l.last_name)}" required style="width:120px"></label>
+        <label>Gender <select name="gender"><option value="">–</option><option ${l.gender === 'F' ? 'selected' : ''}>F</option><option ${l.gender === 'M' ? 'selected' : ''}>M</option></select></label>
+        <label>Parent <input name="parent_name" value="${esc(l.parent_name || '')}" style="width:140px"></label>
+        <label>Phone <input name="parent_phone" value="${esc(l.parent_phone || '')}" style="width:130px"></label>
+        <label>Class <select name="class_id">${classes.map(c => `<option value="${c.id}" ${c.id === id ? 'selected' : ''}>${esc(classLabel(c))}</option>`).join('')}</select></label>
+        <button>Save</button><button type="button" class="secondary" data-cancel>Cancel</button>
+      </form><div data-msg></div></td>`;
+      const f = $('[data-form]', row);
+      $('[data-cancel]', row).onclick = () => route();
+      f.onsubmit = action($('button', f), $('[data-msg]', row), async () => {
+        await api('PATCH', `/api/learners/${l.id}`, Object.fromEntries(new FormData(f)));
+        route();
+      });
+    };
+  });
+  $$('[data-remove]').forEach(b => {
+    b.onclick = action(b, $('#lm'), async () => {
+      const l = learners.find(x => x.id === b.dataset.remove);
+      if (!confirm(`Remove ${l.first_name} ${l.last_name}? Use this when a learner has left the school. Their past results and report forms are kept.`)) return;
+      await api('PATCH', `/api/learners/${l.id}`, { active: false });
+      route();
+    });
   });
 }
 

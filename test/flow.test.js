@@ -230,3 +230,46 @@ test('Phase 1 flow', async (t) => {
     assert.equal((await admin('GET', '/api/owner/schools')).status, 403);
   });
 });
+
+test('managing learners: edit, move class, remove', async () => {
+  const cls = fake.store.classes.find(c => c.grade === 7);
+  const baraka = fake.store.learners.find(l => l.first_name === 'Baraka');
+  const edited = ok(await admin('PATCH', `/api/learners/${baraka.id}`, { first_name: ' Baraka ', parent_phone: '0722 000 111', gender: 'male' }));
+  assert.deepEqual([edited.first_name, edited.parent_phone, edited.gender], ['Baraka', '+254722000111', 'M']);
+  assert.equal((await admin('PATCH', `/api/learners/${baraka.id}`, { parent_phone: '123' })).status, 400);
+  assert.equal((await admin('PATCH', `/api/learners/${baraka.id}`, { last_name: '  ' })).status, 400);
+  // Moving to a class that is not this school's is refused
+  assert.equal((await admin('PATCH', `/api/learners/${baraka.id}`, { class_id: 'other-school-class' })).status, 404);
+  const other = ok(await admin('POST', '/api/classes', { grade: 7, stream: 'West', year: cls.year }));
+  ok(await admin('PATCH', `/api/learners/${baraka.id}`, { class_id: other.id }));
+  assert.equal(ok(await admin('GET', `/api/learners?class_id=${other.id}`)).length, 1);
+  ok(await admin('PATCH', `/api/learners/${baraka.id}`, { class_id: cls.id }));
+  // Removing hides the learner from lists, but keeps their history
+  const chebet = fake.store.learners.find(l => l.first_name === 'Chebet');
+  ok(await admin('PATCH', `/api/learners/${chebet.id}`, { active: false }));
+  assert.ok(!ok(await admin('GET', `/api/learners?class_id=${cls.id}`)).some(l => l.id === chebet.id));
+  const reports = ok(await admin('GET', `/api/reports/termly?class_id=${cls.id}&year=${cls.year}&term=1`));
+  assert.ok(reports.reports.some(r => r.learner_id === chebet.id), 'a learner who left still has their old report form');
+});
+
+test('promoting a class keeps old report forms; a final class can be marked completed', async () => {
+  const cls = fake.store.classes.find(c => c.grade === 7 && c.stream === 'East');
+  const before = ok(await admin('GET', `/api/reports/termly?class_id=${cls.id}&year=${cls.year}&term=1`)).reports.length;
+  const out = ok(await admin('POST', `/api/classes/${cls.id}/promote`, { mode: 'promote' }));
+  assert.equal(out.promoted, 2);
+  assert.deepEqual([out.class.grade, out.class.stream, out.class.year], [8, 'East', cls.year + 1]);
+  assert.equal(ok(await admin('GET', `/api/learners?class_id=${cls.id}`)).length, 0);
+  assert.equal(ok(await admin('GET', `/api/learners?class_id=${out.class.id}`)).length, 2);
+  assert.equal(ok(await admin('GET', `/api/reports/termly?class_id=${cls.id}&year=${cls.year}&term=1`)).reports.length, before);
+  // Promoting the West stream reuses an existing next-year class rather than creating a duplicate
+  const west = fake.store.classes.find(c => c.grade === 7 && c.stream === 'West');
+  const amani = fake.store.learners.find(l => l.first_name === 'Amani');
+  ok(await admin('PATCH', `/api/learners/${amani.id}`, { class_id: west.id }));
+  const w = ok(await admin('POST', `/api/classes/${west.id}/promote`, { mode: 'promote' }));
+  assert.equal(fake.store.classes.filter(c => c.grade === 8 && c.stream === 'West').length, 1);
+  assert.equal((await admin('POST', `/api/classes/${west.id}/promote`, { mode: 'promote' })).status, 400); // now empty
+  const done = ok(await admin('POST', `/api/classes/${w.class.id}/promote`, { mode: 'complete' }));
+  assert.equal(done.completed, 1);
+  assert.equal(fake.store.learners.find(l => l.id === amani.id).active, false);
+  assert.equal((await admin('POST', `/api/classes/${w.class.id}/promote`, { mode: 'x' })).status, 400);
+});
