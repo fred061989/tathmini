@@ -6,7 +6,7 @@ const crypto = require('crypto');
 const SINGULAR = { classes: 'class', learning_areas: 'learning_area', learners: 'learner', assessments: 'assessment', strands: 'strand', sub_strands: 'sub_strand', schools: 'school' };
 const ONE_TO_MANY = new Set(['classes.learners', 'learning_areas.strands', 'strands.sub_strands']);
 const DEFAULT_FK = { staff: 'teacher_id' };
-const KEYS = { scores: ['assessment_id', 'learner_id', 'component_id'], results: ['assessment_id', 'learner_id'] };
+const KEYS = { scores: ['assessment_id', 'learner_id', 'component_id'], results: ['assessment_id', 'learner_id'], learner_terms: ['learner_id', 'year', 'term'], report_comments: ['learner_id', 'year', 'term'] };
 const IDENTITY = new Set(['account_ledger']);
 const DEFAULTS = {
   schools: { grading: {}, balance_cents: 0, google_refresh_token: null },

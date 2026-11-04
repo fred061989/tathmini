@@ -154,7 +154,7 @@ async function renderDashboard() {
   view().innerHTML = `
     <div class="row" style="justify-content:space-between"><h1>Assessments</h1><a class="btn" href="#new">New assessment</a></div>
     ${S.school.google_connected ? '' : '<div class="notice error">Google is not connected, so score sheets cannot be sent to teachers. <a href="#settings">Connect it in Settings</a>.</div>'}
-    ${billing.learners_unpaid ? `<div class="notice error">${billing.learners_unpaid} learner(s) are not paid for ${billing.year}, so they are left out of new sheets and report forms. <a href="#settings">See Billing in Settings</a>.</div>` : ''}
+    ${billing.unpaid.length ? `<div class="notice error">${billing.unpaid.length} learner(s) are not paid for Term ${billing.term} ${billing.year}, so they are left out of new sheets and report forms. <a href="#settings">Pay in Settings → Billing</a>.</div>` : ''}
     <div class="grid">
       <div class="stat"><div class="v">${count('draft')}</div><div class="k">Drafts (no sheet yet)</div></div>
       <div class="stat"><div class="v">${count('sheet_ready')}</div><div class="k">With teachers</div></div>
@@ -666,11 +666,13 @@ async function renderClass(id) {
       <strong>Add learners</strong>
       <p class="muted">Paste from Excel or Google Sheets, one learner per line, in this order:
         <code>adm_no, assessment_no, first_name, last_name, gender (F/M), parent_name, parent_phone</code>.
-        Each <strong>new</strong> learner costs <strong>${money(billing.learner_fee_cents)}</strong> for the year, from the account balance
-        (now ${money(billing.balance_cents)}). Existing ADM numbers are updated for free, e.g. when moving learners to a new class.</p>
+        Existing ADM numbers are updated, e.g. when moving learners to a new class. After adding, pay for new learners from the
+        account balance (now ${money(billing.balance_cents)}): <strong>${money(billing.prices.term_cents)} per term</strong> or
+        <strong>${money(billing.prices.year_cents)} for the year</strong>.</p>
       <textarea id="csv" class="mono" placeholder="1021, A001021, Amani, Otieno, F, Grace Otieno, 0712345678"></textarea>
       <p><button id="import">Add learners</button></p>
       <div id="m"></div>
+      <div id="pay"></div>
     </div>
     <div class="table-wrap"><table>
       <thead><tr><th>ADM</th><th>Assessment no.</th><th>Learner</th><th>Gender</th><th>Parent</th><th>Phone</th></tr></thead>
@@ -684,7 +686,8 @@ async function renderClass(id) {
     if (!rows.length) throw new Error('Paste at least one learner');
     const out = await api('POST', '/api/learners', { class_id: id, learners: rows });
     await route();
-    notice($('#m'), null, `${out.saved} learner(s) saved${out.added ? `, ${out.added} new (${money(out.charged_cents)} charged)` : ''}.`);
+    notice($('#m'), null, `${out.saved} learner(s) saved${out.added ? `, ${out.added} new` : ''}.`);
+    if (out.added) payPrompt($('#pay'), out.added_ids, `You added ${out.added} new learner${out.added === 1 ? '' : 's'}. Pay now?`);
   });
 }
 
@@ -811,7 +814,8 @@ async function renderSettings() {
   await loadMe();
   const s = S.school;
   const flag = hashParams().get('google');
-  const b = await api('GET', '/api/billing');
+  const bq = hashParams();
+  const b = await api('GET', `/api/billing${bq.get('term') ? `?term=${bq.get('term')}&year=${bq.get('year')}` : ''}`);
   view().innerHTML = `
     <h1>Settings</h1>
     ${flag === 'connected' ? '<div class="notice">Google account connected.</div>' : flag ? `<div class="notice error">Google connection failed: ${esc(flag)}</div>` : ''}
@@ -843,12 +847,17 @@ async function renderSettings() {
       <h2 style="margin-top:0">Billing</h2>
       <div class="grid">
         <div class="stat"><div class="v">${money(b.balance_cents)}</div><div class="k">Account balance</div></div>
-        <div class="stat"><div class="v">${b.learners_paid}/${b.learners}</div><div class="k">Learners paid for ${b.year}</div></div>
-        <div class="stat"><div class="v">${money(b.learner_fee_cents)}</div><div class="k">Per learner per year</div></div>
+        <div class="stat"><div class="v">${b.paid}/${b.learners}</div><div class="k">Learners paid for Term ${b.term} ${b.year}</div></div>
+        <div class="stat"><div class="v">${money(b.prices.term_cents)} / ${money(b.prices.year_cents)}</div><div class="k">Per learner: one term / whole year</div></div>
       </div>
-      <p class="muted">To add to the balance, pay the Tathmini team (e.g. by M-Pesa); they credit your account and it shows below.</p>
-      ${b.learners_unpaid ? `<div class="notice error">${b.learners_unpaid} learner(s) are not paid for ${b.year}. <button id="renew-now" style="margin-left:8px">Pay ${money(b.learners_unpaid * b.learner_fee_cents)} for ${b.year}</button></div>` : ''}
-      ${b.learners && b.next_year.learners_paid < b.learners ? `<p class="muted">New school year? <button class="secondary" id="renew-next">Renew ${b.learners - b.next_year.learners_paid} learner(s) for ${b.next_year.year} (${money((b.learners - b.next_year.learners_paid) * b.learner_fee_cents)})</button></p>` : ''}
+      <p class="muted">To add to the balance, pay the Tathmini team (e.g. by M-Pesa); they credit your account and it shows below.
+        Paying for the year after some terms are paid only charges for the terms left (never more than ${money(b.prices.year_cents)} a year).</p>
+      <form id="bp" class="inline">
+        <label>Term <select name="term">${[1, 2, 3].map(t => `<option value="${t}" ${t === b.term ? 'selected' : ''}>Term ${t}</option>`).join('')}</select></label>
+        <label>Year <input name="year" type="number" value="${b.year}" style="width:90px"></label>
+        <button class="secondary">Show</button>
+      </form>
+      <div id="bpay" style="margin-top:12px"></div>
       <div id="bm"></div>
       ${b.ledger.length ? `<h2>Account activity</h2><div class="table-wrap"><table>
         <thead><tr><th>Date</th><th>Details</th><th class="num">Amount</th><th class="num">Balance</th></tr></thead>
@@ -871,13 +880,13 @@ async function renderSettings() {
   if ($('#gdis')) $('#gdis').onclick = action($('#gdis'), $('#gm'), async () => { await api('POST', '/api/google/disconnect'); route(); });
   const f = $('#f');
   f.onsubmit = action($('button', f), $('#m'), async () => { await api('PATCH', '/api/school', Object.fromEntries(new FormData(f))); await loadMe(); notice($('#m'), null, 'Saved.'); });
-  const renew = (btn, year) => action(btn, $('#bm'), async () => {
-    const out = await api('POST', '/api/billing/renew', { year });
-    await route();
-    setTimeout(() => notice($('#bm'), null, `${out.learners} learner(s) paid for ${year} (${money(out.charged_cents)}).`), 200);
-  });
-  if ($('#renew-now')) $('#renew-now').onclick = renew($('#renew-now'), b.year);
-  if ($('#renew-next')) $('#renew-next').onclick = renew($('#renew-next'), b.next_year.year);
+  const bp = $('#bp');
+  bp.onsubmit = e => { e.preventDefault(); const fd = Object.fromEntries(new FormData(bp)); location.hash = `#settings?term=${fd.term}&year=${fd.year}`; };
+  if (b.unpaid.length) {
+    payPrompt($('#bpay'), 'unpaid', `${b.unpaid.length} learner(s) not paid for Term ${b.term} ${b.year}: ${b.unpaid.slice(0, 8).map(l => l.name).join(', ')}${b.unpaid.length > 8 ? '…' : ''}`, { term: b.term, year: b.year });
+  } else {
+    $('#bpay').innerHTML = `<p class="muted">All ${b.learners} learners are paid for Term ${b.term} ${b.year}.</p>`;
+  }
   const gr = $('#gr');
   gr.onsubmit = action($('button', gr), $('#grm'), async () => {
     const grading = { cbc4: {}, cbc8: {} };
@@ -885,6 +894,33 @@ async function renderSettings() {
     await api('PATCH', '/api/school', { grading });
     await loadMe();
     notice($('#grm'), null, 'Thresholds saved. They apply the next time an assessment is analysed.');
+  });
+}
+
+// Offers to pay for learners by the term or the year, showing both prices first.
+// learnerIds: an array of ids, or 'unpaid' for every unpaid learner.
+async function payPrompt(box, learnerIds, message, period = {}) {
+  const term = period.term || thisTerm;
+  const year = period.year || thisYear;
+  const [qt, qy] = await Promise.all(['term', 'year'].map(plan => api('POST', '/api/billing/quote', { learner_ids: learnerIds, term, year, plan })));
+  if (!qt.learners && !qy.learners) { box.innerHTML = ''; return; }
+  box.innerHTML = `
+    <div class="card" style="border-color:var(--accent)">
+      <p style="margin-top:0">${esc(message)}</p>
+      <div class="row">
+        ${qt.learners ? `<button data-plan="term">Pay for Term ${term} · ${money(qt.total_cents)}</button>` : ''}
+        ${qy.learners ? `<button data-plan="year" class="secondary">Pay for the whole of ${year} · ${money(qy.total_cents)}</button>` : ''}
+        <button class="secondary" data-later>Later</button>
+      </div>
+      <div data-msg style="margin-top:8px"></div>
+    </div>`;
+  const msg = $('[data-msg]', box);
+  $('[data-later]', box).onclick = () => { box.innerHTML = '<p class="muted">Not paid yet: these learners are left out of sheets and report forms until paid for (Settings → Billing).</p>'; };
+  $$('[data-plan]', box).forEach(btn => {
+    btn.onclick = action(btn, msg, async () => {
+      const out = await api('POST', '/api/billing/pay', { learner_ids: learnerIds, term, year, plan: btn.dataset.plan });
+      box.innerHTML = `<div class="notice">Paid for ${out.learners} learner(s): ${money(out.charged_cents)}. Balance now ${money(out.balance_cents)}.</div>`;
+    });
   });
 }
 
@@ -897,15 +933,15 @@ async function renderSchools() {
     <div class="grid">
       <div class="stat"><div class="v">${schools.length}</div><div class="k">Schools</div></div>
       <div class="stat"><div class="v">${schools.reduce((n, x) => n + x.learners, 0).toLocaleString()}</div><div class="k">Learners</div></div>
-      <div class="stat"><div class="v">${schools.reduce((n, x) => n + x.learners_paid_this_year, 0).toLocaleString()}</div><div class="k">Learners paid for ${thisYear}</div></div>
+      <div class="stat"><div class="v">${schools.reduce((n, x) => n + x.learners_paid_this_term, 0).toLocaleString()}</div><div class="k">Learners paid for Term ${thisTerm} ${thisYear}</div></div>
     </div>
     <div id="m" style="margin-top:12px"></div>
     <div class="table-wrap"><table>
-      <thead><tr><th>School</th><th>Contact</th><th class="num">Learners (paid this year)</th><th class="num">Balance</th><th>Record a payment or correction</th></tr></thead>
+      <thead><tr><th>School</th><th>Contact</th><th class="num">Learners (paid this term)</th><th class="num">Balance</th><th>Record a payment or correction</th></tr></thead>
       <tbody>${schools.map(x => `<tr>
         <td><strong>${esc(x.name)}</strong><div class="muted">${esc(x.county || '')}</div></td>
         <td>${esc(x.phone || '')}<div class="muted">${esc(x.email || '')}</div></td>
-        <td class="num">${x.learners} <span class="muted">(${x.learners_paid_this_year})</span></td>
+        <td class="num">${x.learners} <span class="muted">(${x.learners_paid_this_term})</span></td>
         <td class="num">${money(x.balance_cents)}</td>
         <td><form class="row" data-credit="${x.id}"><input name="amount_kes" type="number" step="1" placeholder="KES" style="width:90px" required>
           <input name="reason" placeholder="e.g. M-Pesa QJK2X7" style="width:150px"><button class="secondary">Apply</button></form></td>

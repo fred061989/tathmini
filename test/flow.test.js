@@ -11,6 +11,7 @@ require.cache[supabasePath] = { id: supabasePath, filename: supabasePath, loaded
 process.env.STATE_SECRET = 'test-secret';
 process.env.PLATFORM_OWNER_EMAILS = 'owner@tathmini.co.ke';
 process.env.LEARNER_FEE_KES = '50';
+process.env.LEARNER_TERM_FEE_KES = '20';
 
 const sheets = require('../lib/sheets');
 const api = require('../api/index');
@@ -33,6 +34,7 @@ const admin = as('admin');
 const owner = as('owner');
 const ok = r => { assert.ok(r.status < 300, `${r.status} ${JSON.stringify(r.body)}`); return r.body; };
 const YEAR = new Date().getFullYear();
+const NOW_TERM = (m => (m <= 3 ? 1 : m <= 7 ? 2 : 3))(new Date().getMonth());
 
 // Fills the most recently created sheet: { 'Learner Name': [scores...] | 'absent' } plus optional comments.
 function fill(scoresByName, comments = {}) {
@@ -78,7 +80,7 @@ test('Phase 1 flow', async (t) => {
     ids.sct = areas.find(a => a.name === 'Science and Technology').id;
   });
 
-  await t.test('learners cost KES 50 each per year from the balance', async () => {
+  await t.test('learners are added free, then paid for by the term (KES 20) or the year (KES 50)', async () => {
     ids.teacher = ok(await admin('POST', '/api/staff', { full_name: 'Janet Wanjiku', email: 'wanjiku@kilimani.sc.ke' })).staff.id;
     ids.cls = ok(await admin('POST', '/api/classes', { grade: 7, stream: 'East', year: YEAR, class_teacher_id: ids.teacher })).id;
     const list = [
@@ -86,18 +88,39 @@ test('Phase 1 flow', async (t) => {
       { adm_no: '102', first_name: 'Baraka', last_name: 'Kamau', gender: 'M' },
       { adm_no: '103', first_name: 'Chebet', last_name: 'Kiprop', gender: 'F' },
     ];
-    const short = await admin('POST', '/api/learners', { class_id: ids.cls, learners: list });
-    assert.equal(short.status, 402);
-    assert.match(short.body.error, /Adding 3 new learners \(KES 50 each for \d+\) costs KES 150, but the account balance is KES 0/);
-    assert.equal(ok(await owner('POST', `/api/owner/schools/${fake.store.schools[0].id}/balance`, { amount_kes: 500, reason: 'M-Pesa QJK2X7' })).balance_cents, 50000);
     const saved = ok(await admin('POST', '/api/learners', { class_id: ids.cls, learners: list }));
-    assert.deepEqual([saved.added, saved.charged_cents], [3, 15000]);
+    assert.equal(saved.added, 3);
+    assert.equal(saved.added_ids.length, 3);
     assert.equal(saved.learners[0].parent_phone, '+254712345678');
     const again = ok(await admin('POST', '/api/learners', { class_id: ids.cls, learners: [{ adm_no: '103', first_name: 'Chebet', last_name: 'Kiprop', parent_name: 'Mama Chebet' }] }));
-    assert.equal(again.charged_cents, 0);
-    const billing = ok(await admin('GET', '/api/billing'));
-    assert.deepEqual([billing.balance_cents, billing.learners_paid, billing.learner_fee_cents], [35000, 3, 5000]);
-    assert.deepEqual(billing.ledger.map(l => l.kind), ['learner_fee', 'payment']);
+    assert.equal(again.added, 0);
+
+    let billing = ok(await admin('GET', `/api/billing?year=${YEAR}&term=1`));
+    assert.deepEqual([billing.unpaid.length, billing.quotes.term, billing.quotes.year], [3, 6000, 15000]);
+
+    // Not enough balance: nothing is paid
+    const short = await admin('POST', '/api/billing/pay', { learner_ids: 'unpaid', year: YEAR, term: 1, plan: 'year' });
+    assert.equal(short.status, 402);
+    assert.match(short.body.error, /Paying for 3 learners \(\d+\) costs KES 150, but the account balance is KES 0/);
+    assert.equal(ok(await owner('POST', `/api/owner/schools/${fake.store.schools[0].id}/balance`, { amount_kes: 500, reason: 'M-Pesa QJK2X7' })).balance_cents, 50000);
+
+    // Two learners for the whole year, one (joined mid-term) for just Term 1
+    const [amani, baraka, chebet] = saved.added_ids;
+    const q = ok(await admin('POST', '/api/billing/quote', { learner_ids: [amani, baraka], year: YEAR, term: 1, plan: 'year' }));
+    assert.deepEqual([q.learners, q.total_cents], [2, 10000]);
+    const yearPay = ok(await admin('POST', '/api/billing/pay', { learner_ids: [amani, baraka], year: YEAR, term: 1, plan: 'year' }));
+    assert.deepEqual([yearPay.charged_cents, yearPay.balance_cents], [10000, 40000]);
+    const termPay = ok(await admin('POST', '/api/billing/pay', { learner_ids: [chebet], year: YEAR, term: 1, plan: 'term' }));
+    assert.equal(termPay.charged_cents, 2000);
+    // Paying again changes nothing; Chebet's rest of the year costs 2 × 20 = 40, not 50
+    assert.equal(ok(await admin('POST', '/api/billing/pay', { learner_ids: 'unpaid', year: YEAR, term: 1, plan: 'year' })).charged_cents, 4000);
+    assert.equal(ok(await admin('GET', `/api/billing?year=${YEAR}&term=3`)).unpaid.length, 0);
+    // Someone else's learner cannot be paid for through this school
+    assert.equal((await admin('POST', '/api/billing/quote', { learner_ids: ['not-mine'], year: YEAR, term: 1, plan: 'term' })).status, 400);
+
+    billing = ok(await admin('GET', `/api/billing?year=${YEAR}&term=1`));
+    assert.deepEqual([billing.balance_cents, billing.paid, billing.prices.term_cents, billing.prices.year_cents], [34000, 3, 2000, 5000]);
+    assert.deepEqual(billing.ledger.map(l => l.kind), ['learner_fee', 'learner_fee', 'learner_fee', 'payment']);
   });
 
   await t.test('teachers are assigned learning areas taught in the grade', async () => {
@@ -196,13 +219,14 @@ test('Phase 1 flow', async (t) => {
     assert.equal(ok(await admin('GET', `/api/reports/termly?class_id=${ids.cls}&year=${YEAR}&term=1`)).term_record.closed_at, null);
   });
 
-  await t.test('renewing for next year; owner sees all schools', async () => {
-    assert.equal((await admin('POST', '/api/billing/renew', { year: YEAR + 2 })).status, 400);
-    const r = ok(await admin('POST', '/api/billing/renew', { year: YEAR + 1 }));
-    assert.deepEqual([r.learners, r.charged_cents], [3, 15000]);
-    assert.equal(ok(await admin('POST', '/api/billing/renew', { year: YEAR + 1 })).charged_cents, 0);
+  await t.test('a new year: learners are unpaid until paid for; owner sees all schools', async () => {
+    const next = ok(await admin('GET', `/api/billing?year=${YEAR + 1}&term=1`));
+    assert.deepEqual([next.unpaid.length, next.quotes.year], [3, 15000]);
+    const asg = fake.store.teacher_assignments.find(a => a.class_id === ids.cls);
+    const out = ok(await admin('POST', '/api/assessments', { assignment_ids: [asg.id], kind: 'weekly', year: YEAR + 1, term: 1, max_score: 10 }));
+    assert.match(out.created[0].note, /no learners paid for Term 1/);
     const schools = ok(await owner('GET', '/api/owner/schools'));
-    assert.deepEqual([schools[0].name, schools[0].learners, schools[0].learners_paid_this_year, schools[0].balance_cents], ['Kilimani Junior School', 3, 3, 20000]);
+    assert.deepEqual([schools[0].name, schools[0].learners, schools[0].balance_cents], ['Kilimani Junior School', 3, 34000]);
     assert.equal((await admin('GET', '/api/owner/schools')).status, 403);
   });
 });

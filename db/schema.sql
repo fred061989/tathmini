@@ -175,14 +175,17 @@ CREATE TABLE IF NOT EXISTS report_comments (
   PRIMARY KEY (learner_id, year, term)
 );
 
--- Billing: KES 50 per learner per year from a prepaid balance (amounts in cents).
-CREATE TABLE IF NOT EXISTS learner_years (
+-- Billing: each learner is paid for term by term, from a prepaid balance (amounts in cents).
+-- KES 20 per term, or KES 50 for the year (all three terms).
+CREATE TABLE IF NOT EXISTS learner_terms (
   learner_id UUID NOT NULL REFERENCES learners(id) ON DELETE CASCADE,
   school_id UUID NOT NULL REFERENCES schools(id) ON DELETE CASCADE,
   year INTEGER NOT NULL,
+  term INTEGER NOT NULL CHECK (term BETWEEN 1 AND 3),
+  plan TEXT NOT NULL CHECK (plan IN ('term', 'year')),
   fee_cents INTEGER NOT NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-  PRIMARY KEY (learner_id, year)
+  PRIMARY KEY (learner_id, year, term)
 );
 
 CREATE TABLE IF NOT EXISTS account_ledger (
@@ -223,7 +226,7 @@ CREATE INDEX IF NOT EXISTS idx_assess_school ON assessments(school_id, status);
 CREATE INDEX IF NOT EXISTS idx_assess_class_term ON assessments(class_id, year, term);
 CREATE INDEX IF NOT EXISTS idx_components_assess ON assessment_components(assessment_id);
 CREATE INDEX IF NOT EXISTS idx_results_learner ON results(learner_id);
-CREATE INDEX IF NOT EXISTS idx_learner_years_school ON learner_years(school_id, year);
+CREATE INDEX IF NOT EXISTS idx_learner_terms_school ON learner_terms(school_id, year, term);
 CREATE INDEX IF NOT EXISTS idx_ledger_school ON account_ledger(school_id, created_at);
 
 ALTER TABLE schools ENABLE ROW LEVEL SECURITY;
@@ -240,5 +243,5 @@ ALTER TABLE scores ENABLE ROW LEVEL SECURITY;
 ALTER TABLE results ENABLE ROW LEVEL SECURITY;
 ALTER TABLE terms ENABLE ROW LEVEL SECURITY;
 ALTER TABLE report_comments ENABLE ROW LEVEL SECURITY;
-ALTER TABLE learner_years ENABLE ROW LEVEL SECURITY;
+ALTER TABLE learner_terms ENABLE ROW LEVEL SECURITY;
 ALTER TABLE account_ledger ENABLE ROW LEVEL SECURITY;
