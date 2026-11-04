@@ -37,7 +37,7 @@ Only school **admins** sign in, e.g. the head teacher and the ICT person. **Teac
 
 **Only paid-for learners** get scores. Unpaid learners are listed in the app, but no scores can be entered for them and they are not on teachers' sheets. A class where nobody is paid for yet is held ("Waiting for payment") and sent automatically once paid for, as a new tab in the teacher's workbook from the same batch (no new email) or as a new workbook. When a learner is paid for, they are added automatically to the bottom of every sheet already sent for that term (the assessment page offers a retry if Google could not be reached).
 
-**End-of-year average:** the mean of the Term 1, 2 and 3 averages (a term without results is left out). Choose **Whole year** on Class results or Report forms for the year sheet and end-of-year report forms.
+**End-of-year average:** the mean of the Term 1, 2 and 3 averages (a term without results is left out). Choose **Whole year** on Class results or Report forms for the year sheet and end-of-year report forms. Choose **Custom dates** for a progress report over any period (e.g. 12 Jan – 14 Mar): every assessment dated in the period counts, worked out the same way as a term.
 
 Absences are left out, not counted as zero. The overall average gives each learning area equal weight. Each school also chooses a **school colour**, used on report forms and app buttons.
 

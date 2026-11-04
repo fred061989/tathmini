@@ -309,6 +309,25 @@ test('Phase 1 flow', async (t) => {
     assert.equal((await admin('GET', `/api/classes/${ids.cls}/year?year=abc`)).status, 400);
   });
 
+  await t.test('custom period: results and report forms for any dates', async () => {
+    // February only: just the monthly tests (Maths 18/20 + 9/10 = 90%, English 30/50 = 60%)
+    const feb = ok(await admin('GET', `/api/classes/${ids.cls}/period?from=${YEAR}-02-01&to=${YEAR}-02-28`));
+    assert.deepEqual([feb.period, feb.term], [{ from: `${YEAR}-02-01`, to: `${YEAR}-02-28` }, null]);
+    assert.deepEqual(feb.columns.map(c => c.label), ['Monthly']);
+    const amani = feb.learners.find(l => l.name === 'Amani Otieno');
+    assert.deepEqual([amani.areas[ids.math].average, amani.areas[ids.eng].average, amani.overall_percent], [90, 60, 75]);
+    // A period can cross terms: February to July takes in Term 2's English test too
+    const long = ok(await admin('GET', `/api/classes/${ids.cls}/period?from=${YEAR}-02-01&to=${YEAR}-07-31`));
+    assert.ok(long.assessments > feb.assessments);
+    const rep = ok(await admin('GET', `/api/reports/period?class_id=${ids.cls}&from=${YEAR}-02-01&to=${YEAR}-02-28&learner_id=${amani.learner_id}`));
+    assert.equal(rep.reports.length, 1);
+    assert.match(rep.reports[0].class_comment, /^Amani has made (good|excellent) progress over these weeks/);
+    assert.equal(rep.reports[0].comments_saved, false);
+    for (const q of ['from=2027-03-01&to=2027-02-01', 'from=soon&to=2027-02-01', `from=${YEAR}-01-01&to=${YEAR + 2}-01-01`, 'to=2027-02-01']) {
+      assert.equal((await admin('GET', `/api/classes/${ids.cls}/period?${q}`)).status, 400, q);
+    }
+  });
+
   await t.test('a new year: learners are unpaid until paid for; owner sees all schools', async () => {
     const next = ok(await admin('GET', `/api/billing?year=${YEAR + 1}&term=1`));
     assert.deepEqual([next.unpaid.length, next.quotes.year], [3, 15000]);

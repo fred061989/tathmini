@@ -20,8 +20,13 @@ const thisYear = new Date().getFullYear();
 // Kenyan school terms: roughly Jan–Apr, May–Aug, Sep–Nov.
 const thisTerm = (m => (m <= 3 ? 1 : m <= 7 ? 2 : 3))(new Date().getMonth());
 const hashParams = () => new URLSearchParams(location.hash.split('?')[1] || '');
-// Term 0 means the whole year (end-of-year results and report forms).
-const periodLabel = (term, year) => (Number(term) === 0 ? `Year ${year}` : `Term ${term} ${year}`);
+// Term 0 means the whole year (end-of-year results and report forms); term 'p' a custom period (from–to).
+const shortDate = d => new Date(d + 'T00:00:00').toLocaleDateString('en-KE', { day: 'numeric', month: 'short', year: 'numeric' });
+const rangeLabel = p => `${shortDate(p.from)} – ${shortDate(p.to)}`;
+const periodLabel = (term, year, range) => (range?.from ? rangeLabel(range) : Number(term) === 0 ? `Year ${year}` : `Term ${term} ${year}`);
+const reportLabel = r => periodLabel(r.term, r.year, r.period);
+// The hash query for a chosen class and period.
+const periodQuery = sel => `class=${sel.class}&term=${sel.term}&year=${sel.year}${sel.term === 'p' ? `&from=${sel.from}&to=${sel.to}` : ''}`;
 
 async function api(method, path, body) {
   const { data } = await S.sb.auth.getSession();
@@ -68,14 +73,39 @@ function distBar(dist) {
 function periodPicker(classes, sel) {
   return `
     <label>Class <select name="class_id"><option value="">Choose…</option>${classes.map(c => `<option value="${c.id}" ${c.id === sel.class ? 'selected' : ''}>${esc(classLabel(c))}</option>`).join('')}</select></label>
-    <label>Term <select name="term">${[1, 2, 3].map(t => `<option value="${t}" ${Number(sel.term) === t ? 'selected' : ''}>Term ${t}</option>`).join('')}
-      <option value="0" ${Number(sel.term) === 0 ? 'selected' : ''}>Whole year</option></select></label>
-    <label>Year <input name="year" type="number" value="${esc(sel.year)}" style="width:90px"></label>`;
+    <label>Period <select name="term">${[1, 2, 3].map(t => `<option value="${t}" ${sel.term === t ? 'selected' : ''}>Term ${t}</option>`).join('')}
+      <option value="0" ${sel.term === 0 ? 'selected' : ''}>Whole year</option>
+      <option value="p" ${sel.term === 'p' ? 'selected' : ''}>Custom dates…</option></select></label>
+    <label data-year>Year <input name="year" type="number" value="${esc(sel.year)}" style="width:90px"></label>
+    <label data-range>From <input name="from" type="date" value="${esc(sel.from || '')}"></label>
+    <label data-range>To <input name="to" type="date" value="${esc(sel.to || '')}"></label>`;
+}
+
+// Shows the year or the from/to dates to match the period chosen, and opens `page` for the choice.
+function wirePeriodForm(f, page) {
+  const show = () => {
+    const custom = f.term.value === 'p';
+    $$('[data-range]', f).forEach(el => { el.hidden = !custom; });
+    $$('[data-year]', f).forEach(el => { el.hidden = custom; });
+  };
+  f.term.onchange = show;
+  show();
+  f.onsubmit = e => {
+    e.preventDefault();
+    const fd = Object.fromEntries(new FormData(f));
+    if (!fd.class_id) return notice($('#m'), new Error('Choose a class'));
+    if (fd.term === 'p' && (!fd.from || !fd.to)) return notice($('#m'), new Error('Choose the dates the period starts and ends'));
+    if (fd.term === 'p' && fd.from > fd.to) return notice($('#m'), new Error('The period must end after it starts'));
+    const term = fd.term === 'p' ? 'p' : Number(fd.term);
+    location.hash = `#${page}?${periodQuery({ class: fd.class_id, term, year: term === 'p' ? fd.from.slice(0, 4) : fd.year, from: fd.from, to: fd.to })}`;
+  };
 }
 
 function readPeriod(defaults = {}) {
   const q = hashParams();
-  return { class: q.get('class') || defaults.class || '', term: Number(q.get('term') ?? thisTerm), year: Number(q.get('year') || thisYear) };
+  const t = q.get('term') ?? String(thisTerm);
+  return { class: q.get('class') || defaults.class || '', term: t === 'p' ? 'p' : Number(t), year: Number(q.get('year') || thisYear),
+    from: q.get('from') || '', to: q.get('to') || '' };
 }
 
 // Loads a script once, only when a feature needs it (Excel files, PDFs, ZIP).
@@ -605,28 +635,23 @@ async function renderResults() {
       ${S.school.assessment_style === 'strands'
     ? 'Your school works out term results strand by strand: each learner\'s strand marks over the term are added up into a percentage.'
     : 'Each assessment type (monthly, end-term…) counts once in a term average.'} Absences are left out, not counted as zero.
-      Choose <b>Whole year</b> for Term 1, 2 and 3 and the year average.</p>
+      Choose <b>Whole year</b> for Term 1, 2 and 3 and the year average, or <b>Custom dates</b> for any period (e.g. 12 Jan – 14 Mar).</p>
     <form id="pf" class="card inline no-print">${periodPicker(classes, sel)}<button>Show</button></form>
     <div id="m"></div><div id="out"></div>`;
-  const f = $('#pf');
-  f.onsubmit = e => {
-    e.preventDefault();
-    const fd = Object.fromEntries(new FormData(f));
-    if (!fd.class_id) return notice($('#m'), new Error('Choose a class'));
-    location.hash = `#results?class=${fd.class_id}&term=${fd.term}&year=${fd.year}`;
-  };
+  wirePeriodForm($('#pf'), 'results');
   if (!sel.class) return;
   if (sel.term === 0) return renderYearResults(sel);
-  const s = await api('GET', `/api/classes/${sel.class}/term?year=${sel.year}&term=${sel.term}`);
-  if (!s.assessments) { $('#out').innerHTML = `<p class="muted">No analysed assessments for ${esc(s.class.label)} in Term ${s.term} ${s.year} yet.</p>`; return; }
+  const s = await api('GET', sel.term === 'p' ? `/api/classes/${sel.class}/period?from=${sel.from}&to=${sel.to}` : `/api/classes/${sel.class}/term?year=${sel.year}&term=${sel.term}`);
+  const label = periodLabel(s.term, s.year, s.period);
+  if (!s.assessments) { $('#out').innerHTML = `<p class="muted">No analysed assessments for ${esc(s.class.label)} in ${esc(label)} yet.</p>`; return; }
   $('#out').innerHTML = `
     <div class="row no-print" style="margin-bottom:12px">
       <button id="print">Print class sheet</button>
       <button class="secondary" id="xlsx">Download Excel</button>
-      <a class="btn secondary" href="#reports?class=${sel.class}&term=${sel.term}&year=${sel.year}">Report forms for this class</a>
+      <a class="btn secondary" href="#reports?${periodQuery(sel)}">Report forms for this class</a>
     </div>
     <div class="sheet-print">
-      <h2 style="margin-top:0">${esc(S.school.name)} · ${esc(s.class.label)} · Term ${s.term} ${s.year}</h2>
+      <h2 style="margin-top:0">${esc(S.school.name)} · ${esc(s.class.label)} · ${esc(label)}</h2>
       <p class="muted">Class teacher: ${esc(s.class.class_teacher || '–')} · ${s.assessments} assessments · Class mean ${pct(s.class_mean_percent)} ${pill(s.class_level)} ·
         ${s.meeting_or_above} of ${s.learners.filter(l => l.overall_percent != null).length} learners meeting expectations or above</p>
       <div class="table-wrap"><table>
@@ -646,11 +671,11 @@ async function renderResults() {
     const rows = s.learners.map(l => [l.name, l.adm_no || '', ...s.areas.flatMap(a => [l.areas[a.id].average ?? '', l.areas[a.id].level || '']),
       l.overall_percent ?? '', l.overall_level || '']);
     rows.push(['Class mean', '', ...s.areas.flatMap(a => [a.mean_percent ?? '', a.level || '']), s.class_mean_percent ?? '', s.class_level || '']);
-    const ws = XLSX.utils.aoa_to_sheet([[`${S.school.name} · ${s.class.label} · Term ${s.term} ${s.year}`], [], head, ...rows]);
+    const ws = XLSX.utils.aoa_to_sheet([[`${S.school.name} · ${s.class.label} · ${label}`], [], head, ...rows]);
     ws['!cols'] = [{ wch: 22 }, { wch: 8 }, ...head.slice(2).map(() => ({ wch: 12 }))];
     const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, `Term ${s.term} ${s.year}`);
-    XLSX.writeFile(wb, `${s.class.label} - Term ${s.term} ${s.year} results.xlsx`);
+    XLSX.utils.book_append_sheet(wb, ws, s.period ? 'Results' : `Term ${s.term} ${s.year}`);
+    XLSX.writeFile(wb, safeName(`${s.class.label} - ${label} results.xlsx`));
   });
   $('#print').onclick = printLandscape;
 }
@@ -716,30 +741,29 @@ async function renderReports() {
   const sel = readPeriod();
   view().innerHTML = `
     <h1>Report forms</h1>
-    <p class="muted">Report forms, one A4 page per learner: termly, or for the <b>whole year</b> (Term 1, 2, 3 and the year average).
+    <p class="muted">Report forms, one A4 page per learner: termly, for the <b>whole year</b> (Term 1, 2, 3 and the year average), or for
+      <b>custom dates</b> (e.g. a progress report for 12 Jan – 14 Mar).
       The class and head teacher's comments are drafted from each learner's results; edit them here before printing. Close the term when the reports are final.</p>
     <form id="pf" class="card inline">${periodPicker(classes, sel)}<button>Show</button></form>
     <div id="m"></div><div id="out"></div>`;
-  const f = $('#pf');
-  f.onsubmit = e => {
-    e.preventDefault();
-    const fd = Object.fromEntries(new FormData(f));
-    if (!fd.class_id) return notice($('#m'), new Error('Choose a class'));
-    location.hash = `#reports?class=${fd.class_id}&term=${fd.term}&year=${fd.year}`;
-  };
+  wirePeriodForm($('#pf'), 'reports');
   if (!sel.class) return;
   const annual = sel.term === 0;
-  const r = await api('GET', annual ? `/api/reports/annual?class_id=${sel.class}&year=${sel.year}` : `/api/reports/termly?class_id=${sel.class}&year=${sel.year}&term=${sel.term}`);
+  const custom = sel.term === 'p';
+  const r = await api('GET', custom ? `/api/reports/period?class_id=${sel.class}&from=${sel.from}&to=${sel.to}`
+    : annual ? `/api/reports/annual?class_id=${sel.class}&year=${sel.year}` : `/api/reports/termly?class_id=${sel.class}&year=${sel.year}&term=${sel.term}`);
   const t = r.term_record;
-  const closed = Boolean(t.closed_at);
-  const q = `class=${sel.class}&term=${sel.term}&year=${sel.year}`;
+  // A custom period's comments are drafted from the results each time (not saved), so they cannot be edited here.
+  const closed = Boolean(t.closed_at) || custom;
+  const q = periodQuery(sel);
   $('#out').innerHTML = `
     <div class="card">
       <div class="row" style="justify-content:space-between">
-        <strong>${esc(r.class.label)} · ${annual ? `End of year ${r.year}` : `Term ${r.term} ${r.year}`}</strong>
-        <span class="pill" style="color:${closed ? 'var(--accent)' : 'var(--warn)'}">${closed ? `${annual ? 'Term 3' : 'Term'} closed: reports are final` : `${annual ? 'Term 3' : 'Term'} open: reports are provisional`}</span>
+        <strong>${esc(r.class.label)} · ${custom ? `Progress report, ${esc(rangeLabel(r.period))}` : annual ? `End of year ${r.year}` : `Term ${r.term} ${r.year}`}</strong>
+        ${custom ? '' : `<span class="pill" style="color:${closed ? 'var(--accent)' : 'var(--warn)'}">${closed ? `${annual ? 'Term 3' : 'Term'} closed: reports are final` : `${annual ? 'Term 3' : 'Term'} open: reports are provisional`}</span>`}
       </div>
-      ${annual ? `<p class="muted">The year report uses Term 3's closing date and next-term date, and is final once Term 3 is closed.
+      ${custom ? `<p class="muted">A progress report for the dates you chose: every assessment dated in the period counts, worked out the same way
+        as a term. The class and head teacher's comments are written from the results; they cannot be edited for a custom period.</p>` : annual ? `<p class="muted">The year report uses Term 3's closing date and next-term date, and is final once Term 3 is closed.
         <a href="#reports?class=${sel.class}&term=3&year=${sel.year}">Term 3 dates and closing</a></p>` : `
       <form id="tf" class="inline" style="margin-top:12px">
         <label>Closing date <input type="date" name="closing_date" value="${esc(t.closing_date || '')}" ${closed ? 'disabled' : ''}></label>
@@ -748,11 +772,11 @@ async function renderReports() {
       </form>`}
       <div class="row" style="margin-top:12px">
         ${r.reports.length ? `<a class="btn" href="#report?${q}">Print or download all ${r.reports.length} report forms</a>` : ''}
-        ${annual ? '' : closed ? '<button class="secondary" id="reopen">Reopen term</button>' : '<button class="secondary" id="close">Close term</button>'}
+        ${annual || custom ? '' : t.closed_at ? '<button class="secondary" id="reopen">Reopen term</button>' : '<button class="secondary" id="close">Close term</button>'}
       </div>
       <div id="tm" style="margin-top:8px"></div>
     </div>
-    ${r.reports.length ? '' : `<p class="muted">No analysed results for this class ${annual ? 'this year' : 'and term'} yet.</p>`}
+    ${r.reports.length ? '' : `<p class="muted">No analysed results for this class ${custom ? 'in this period' : annual ? 'this year' : 'and term'} yet.</p>`}
     ${r.reports.map(x => `
       <div class="card" data-learner="${x.learner_id}">
         <div class="row" style="justify-content:space-between">
@@ -837,22 +861,22 @@ function perfTable(x, r) {
   if (r.style === 'strands') {
     // Strand-by-strand schools: just each learning area's term average (all its strand marks added up).
     return `<table class="perf"><colgroup><col style="width:46mm">${tail}</colgroup>
-      <thead><tr><th style="text-align:left">Learning area</th>${head('Term<br>average %')}</tr></thead>
+      <thead><tr><th style="text-align:left">Learning area</th>${head(`${r.period ? 'Period' : 'Term'}<br>average %`)}</tr></thead>
       <tbody>${r.areas.map(a => { const v = x.areas[a.id];
         return `<tr><td>${esc(a.name)}</td>${v.average == null && v.cells?.absent ? '<td class="num avg"><span class="abs">AB</span></td><td></td>' : avg(v)}${rfComment(v)}</tr>`; }).join('')}
         ${overall('')}</tbody></table>
-      <div class="note">The term average adds up all of the learner's strand marks in the learning area this term (marks scored ÷ marks possible).
+      <div class="note">The ${r.period ? 'period' : 'term'} average adds up all of the learner's strand marks in the learning area ${r.period ? 'in this period' : 'this term'} (marks scored ÷ marks possible).
         AB = absent. The overall average gives each learning area equal weight. CBC learners are not ranked.</div>`;
   }
   return `<table class="perf"><colgroup><col style="width:34mm">${r.columns.map(() => '<col style="width:11.5mm">').join('')}${tail}</colgroup>
-      <thead><tr><th style="text-align:left">Learning area</th>${r.columns.map(c => `<th class="num">${esc(c.label)}<br>%</th>`).join('')}${head('Term<br>average')}</tr></thead>
+      <thead><tr><th style="text-align:left">Learning area</th>${r.columns.map(c => `<th class="num">${esc(c.label)}<br>%</th>`).join('')}${head(`${r.period ? 'Period' : 'Term'}<br>average`)}</tr></thead>
       <tbody>
         ${r.areas.map(a => { const v = x.areas[a.id]; return `<tr><td>${esc(a.name)}</td>
           ${r.columns.map(c => { const cell = v.cells[c.kind]; return `<td class="num">${!cell ? '' : cell.absent ? '<span class="abs">AB</span>' : rfNum(cell.percent)}</td>`; }).join('')}
           ${avg(v)}${rfComment(v)}</tr>`; }).join('')}
         ${overall(`<td colspan="${r.columns.length}"></td>`)}
       </tbody></table>
-    <div class="note">AB = absent: left out of the average, not counted as zero. Each assessment type counts once in the term average, and the overall average gives each learning area equal weight. CBC learners are not ranked.</div>`;
+    <div class="note">AB = absent: left out of the average, not counted as zero. Each assessment type counts once in the ${r.period ? 'period' : 'term'} average, and the overall average gives each learning area equal weight. CBC learners are not ranked.</div>`;
 }
 
 function reportForm(x, r) {
@@ -871,8 +895,9 @@ function reportForm(x, r) {
       <div class="school"><div class="name">${esc(sch.name)}</div>${meta ? `<div class="meta">${meta}</div>` : ''}${sch.motto ? `<div class="motto">“${esc(sch.motto)}”</div>` : ''}</div>
       <div></div>
     </div>
-    <div class="band">${r.term === 0 ? `LEARNER'S END OF YEAR REPORT &nbsp;<span>· ${r.year}</span>` : `LEARNER'S TERMLY REPORT &nbsp;<span>· TERM ${r.term}, ${r.year}</span>`}</div>
-    ${r.term_record.closed_at ? '' : `<div class="provisional">PROVISIONAL · ${r.term === 0 ? 'TERM 3' : 'TERM'} NOT YET CLOSED</div>`}
+    <div class="band">${r.period ? `LEARNER'S PROGRESS REPORT &nbsp;<span>· ${esc(rangeLabel(r.period).toUpperCase())}</span>`
+      : r.term === 0 ? `LEARNER'S END OF YEAR REPORT &nbsp;<span>· ${r.year}</span>` : `LEARNER'S TERMLY REPORT &nbsp;<span>· TERM ${r.term}, ${r.year}</span>`}</div>
+    ${r.term_record.closed_at || r.period ? '' : `<div class="provisional">PROVISIONAL · ${r.term === 0 ? 'TERM 3' : 'TERM'} NOT YET CLOSED</div>`}
     <div class="facts">
       <div><span>Learner's name</span><b>${esc(x.name.toUpperCase())}</b></div>
       <div><span>ADM no.</span><b>${esc(x.adm_no || '–')}</b></div>
@@ -903,7 +928,8 @@ function reportForm(x, r) {
       <div><h3>Head teacher's comment</h3><div class="comment-box">${esc(x.head_comment)}<div class="by">${esc(sch.head_teacher_name || '')}${sch.head_teacher_name ? ', ' : ''}Head teacher</div></div></div>
     </div>
     <div class="sign"><div>Class teacher's signature</div><div>Head teacher's signature</div><div>Parent / guardian's signature</div><div class="stamp">School stamp</div></div>
-    <div class="dates"><span>Closing date: <b>${esc(longDate(r.term_record.closing_date))}</b></span><span>${r.term === 0 ? 'Next year begins' : 'Next term begins'}: <b>${esc(longDate(r.term_record.next_term_date))}</b></span></div>
+    <div class="dates">${r.period ? `<span>Period: <b>${esc(longDate(r.period.from))}</b> to <b>${esc(longDate(r.period.to))}</b></span>`
+      : `<span>Closing date: <b>${esc(longDate(r.term_record.closing_date))}</b></span><span>${r.term === 0 ? 'Next year begins' : 'Next term begins'}: <b>${esc(longDate(r.term_record.next_term_date))}</b></span>`}</div>
     <div class="foot"><span>Levels follow the CBC ${key.id === 'cbc8' ? '8' : '4'}-level rubric. Report generated from the school's assessment records.</span><span>Tathmini CBC</span></div>
   </section>`;
 }
@@ -913,7 +939,7 @@ async function downloadReportPdfs(r, msg) {
   for (const src of PDF_LIBS) await loadScript(src);
   const { jsPDF } = window.jspdf;
   const zip = new JSZip();
-  const period = periodLabel(r.term, r.year);
+  const period = reportLabel(r);
   const holder = document.createElement('div');
   document.body.appendChild(holder);
   try {
@@ -942,13 +968,15 @@ async function downloadReportPdfs(r, msg) {
 
 async function renderReportForms() {
   const q = hashParams();
-  const sel = { class: q.get('class'), term: q.get('term'), year: q.get('year'), learner: q.get('learner') };
-  const r = await api('GET', Number(sel.term) === 0
+  const sel = { ...readPeriod(), learner: q.get('learner') };
+  const r = await api('GET', sel.term === 'p'
+    ? `/api/reports/period?class_id=${sel.class}&from=${sel.from}&to=${sel.to}${sel.learner ? `&learner_id=${sel.learner}` : ''}`
+    : sel.term === 0
     ? `/api/reports/annual?class_id=${sel.class}&year=${sel.year}${sel.learner ? `&learner_id=${sel.learner}` : ''}`
     : `/api/reports/termly?class_id=${sel.class}&year=${sel.year}&term=${sel.term}${sel.learner ? `&learner_id=${sel.learner}` : ''}`);
   view().innerHTML = `
     <div class="report-bar no-print">
-      <a href="#reports?class=${sel.class}&term=${sel.term}&year=${sel.year}">← Report forms</a><span style="flex:1"></span>
+      <a href="#reports?${periodQuery(sel)}">← Report forms</a><span style="flex:1"></span>
       <span class="muted">${r.reports.length} report form${r.reports.length === 1 ? '' : 's'}</span>
       <button id="print">Print</button>
       ${r.reports.length ? `<button class="secondary" id="zip">${r.reports.length === 1 ? 'Download PDF' : 'Download ZIP (one PDF per learner)'}</button>` : ''}
@@ -957,7 +985,7 @@ async function renderReportForms() {
     ${r.reports.map(x => reportForm(x, r)).join('') || '<p class="muted">No results for this class yet.</p>'}`;
   $('#print').onclick = () => {
     const before = document.title;
-    document.title = sel.learner && r.reports[0] ? `Report - ${r.reports[0].name} - ${periodLabel(sel.term, sel.year)}` : `Reports - ${r.class.label} - ${periodLabel(sel.term, sel.year)}`;
+    document.title = sel.learner && r.reports[0] ? `Report - ${r.reports[0].name} - ${reportLabel(r)}` : `Reports - ${r.class.label} - ${reportLabel(r)}`;
     window.print();
     document.title = before;
   };
@@ -1604,6 +1632,8 @@ async function renderHelp() {
       <li>Press <b>Print or download all report forms</b>. Print them, or download a ZIP file with one PDF per learner.</li>
       <li>When the reports are final, press <b>Close term</b>. This locks the term's results so printed reports never change. You can reopen it if needed.</li>
       <li>At the end of the year, choose <b>Whole year</b> instead of a term: the class sheet and report forms show Term 1, 2 and 3 and the year average.</li>
+      <li>For a progress report over any dates (e.g. 12 Jan – 14 Mar), choose <b>Custom dates</b>: every assessment dated in the period counts,
+        worked out the same way as a term. Its comments are written from the results.</li>
     </ol>`)}
     ${step(5, 'Each new year', `<ol>
       <li>Open each class and press <b>Promote</b> to move all its learners to the next grade (e.g. Grade 7 East 2026 → Grade 8 East 2027).
