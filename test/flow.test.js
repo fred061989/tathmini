@@ -139,9 +139,10 @@ test('Phase 1 flow', async (t) => {
 
     billing = ok(await admin('GET', `/api/billing?year=${YEAR}&term=1`));
     assert.deepEqual([billing.paid, billing.prices.term_cents, billing.prices.year_cents], [3, 2000, 5000]);
-    assert.deepEqual(billing.payments.map(p => [p.description, p.status]),
-      [[`${YEAR} for 1 learner`, 'rejected'], [`Term 1 ${YEAR} for 1 learner`, 'confirmed'], [`${YEAR} for 2 learners`, 'confirmed']]);
-    assert.equal(billing.payments[0].note, 'Not on statement');
+    // (Payments made in the same millisecond have no fixed order, so compare them sorted.)
+    assert.deepEqual(billing.payments.map(p => [p.description, p.status]).sort(),
+      [[`${YEAR} for 1 learner`, 'rejected'], [`${YEAR} for 2 learners`, 'confirmed'], [`Term 1 ${YEAR} for 1 learner`, 'confirmed']]);
+    assert.equal(billing.payments.find(p => p.status === 'rejected').note, 'Not on statement');
   });
 
   await t.test('teachers are assigned learning areas taught in the grade', async () => {
