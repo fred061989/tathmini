@@ -75,6 +75,29 @@ function readPeriod(defaults = {}) {
   return { class: q.get('class') || defaults.class || '', term: Number(q.get('term') || thisTerm), year: Number(q.get('year') || thisYear) };
 }
 
+// Loads a script once, only when a feature needs it (Excel files, PDFs, ZIP).
+const loaded = {};
+function loadScript(src) {
+  loaded[src] ||= new Promise((resolve, reject) => {
+    const el = document.createElement('script');
+    el.src = src;
+    el.onload = resolve;
+    el.onerror = () => { delete loaded[src]; reject(new Error('Could not load a component; check the internet connection')); };
+    document.head.appendChild(el);
+  });
+  return loaded[src];
+}
+const SHEETJS = 'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js';
+
+function downloadBlob(blob, name) {
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = name;
+  document.body.appendChild(a);
+  a.click();
+  setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
+}
+
 // ---------- Boot and navigation ----------
 
 async function boot() {
@@ -442,6 +465,7 @@ async function renderResults() {
   $('#out').innerHTML = `
     <div class="row no-print" style="margin-bottom:12px">
       <button id="print">Print class sheet</button>
+      <button class="secondary" id="xlsx">Download Excel</button>
       <a class="btn secondary" href="#reports?class=${sel.class}&term=${sel.term}&year=${sel.year}">Report forms for this class</a>
     </div>
     <div class="sheet-print">
@@ -459,6 +483,18 @@ async function renderResults() {
         </tbody></table></div>
       <p class="muted">${s.areas.map(a => `${esc(a.code || '')} = ${esc(a.name)}`).join(' · ')}</p>
     </div>`;
+  $('#xlsx').onclick = action($('#xlsx'), $('#m'), async () => {
+    await loadScript(SHEETJS);
+    const head = ['Learner', 'ADM No', ...s.areas.flatMap(a => [`${a.name} %`, `${a.code || a.name} level`]), 'Overall %', 'Overall level'];
+    const rows = s.learners.map(l => [l.name, l.adm_no || '', ...s.areas.flatMap(a => [l.areas[a.id].average ?? '', l.areas[a.id].level || '']),
+      l.overall_percent ?? '', l.overall_level || '']);
+    rows.push(['Class mean', '', ...s.areas.flatMap(a => [a.mean_percent ?? '', a.level || '']), s.class_mean_percent ?? '', s.class_level || '']);
+    const ws = XLSX.utils.aoa_to_sheet([[`${S.school.name} · ${s.class.label} · Term ${s.term} ${s.year}`], [], head, ...rows]);
+    ws['!cols'] = [{ wch: 22 }, { wch: 8 }, ...head.slice(2).map(() => ({ wch: 12 }))];
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, `Term ${s.term} ${s.year}`);
+    XLSX.writeFile(wb, `${s.class.label} - Term ${s.term} ${s.year} results.xlsx`);
+  });
   // The class sheet prints landscape with margins; report forms print portrait edge to edge.
   $('#print').onclick = () => {
     const style = document.createElement('style');
@@ -724,7 +760,13 @@ async function renderClass(id) {
     </div>
     <div class="card">
       <strong>Add learners</strong>
-      <p class="muted">Paste from Excel or Google Sheets, one learner per line, in this order:
+      <div class="row" style="margin:8px 0">
+        <label class="btn" style="flex-direction:row;color:#fff">Upload Excel file<input type="file" id="xls" accept=".xlsx,.xls,.csv" hidden></label>
+        <button class="secondary" id="template">Download template</button>
+        <span class="muted">Any spreadsheet with headings such as ADM No, Name (or First name and Surname), Gender, Parent, Parent phone.</span>
+      </div>
+      <div id="preview"></div>
+      <p class="muted">Or paste from Excel or Google Sheets, one learner per line, in this order:
         <code>adm_no, assessment_no, first_name, last_name, gender (F/M), parent_name, parent_phone</code>.
         Existing ADM numbers are updated, e.g. when moving learners to a new class. After adding, pay for new learners from the
         account balance (now ${money(billing.balance_cents)}): <strong>${money(billing.prices.term_cents)} per term</strong> or
@@ -761,14 +803,51 @@ async function renderClass(id) {
       notice($('#cm'), null, `${out.completed} learner(s) marked as finished.`);
     });
   }
-  $('#import').onclick = action($('#import'), $('#m'), async () => {
-    const rows = parseLearnerRows($('#csv').value);
-    if (!rows.length) throw new Error('Paste at least one learner');
+  const addLearners = async rows => {
     const out = await api('POST', '/api/learners', { class_id: id, learners: rows });
     await route();
     notice($('#m'), null, `${out.saved} learner(s) saved${out.added ? `, ${out.added} new` : ''}.`);
     if (out.added) payPrompt($('#pay'), out.added_ids, `You added ${out.added} new learner${out.added === 1 ? '' : 's'}. Pay now?`);
+  };
+  $('#import').onclick = action($('#import'), $('#m'), async () => {
+    const rows = parseLearnerRows($('#csv').value);
+    if (!rows.length) throw new Error('Paste at least one learner');
+    await addLearners(rows);
   });
+  $('#template').onclick = action($('#template'), $('#m'), async () => {
+    await loadScript(SHEETJS);
+    const ws = XLSX.utils.aoa_to_sheet([
+      ['ADM No', 'Assessment No', 'First Name', 'Surname', 'Gender', 'Parent Name', 'Parent Phone'],
+      ['1021', 'A001021', 'Amani', 'Otieno', 'F', 'Grace Otieno', '0712345678'],
+    ]);
+    ws['!cols'] = [10, 14, 16, 16, 8, 20, 14].map(w => ({ wch: w }));
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Learners');
+    XLSX.writeFile(wb, 'Tathmini learners template.xlsx');
+  });
+  $('#xls').onchange = async e => {
+    const file = e.target.files[0];
+    e.target.value = '';
+    if (!file) return;
+    try {
+      await loadScript(SHEETJS);
+      const wb = XLSX.read(await file.arrayBuffer());
+      const rows = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { raw: false, defval: '' });
+      const { learners: found, unknown } = LearnerColumns.mapLearnerRows(rows);
+      if (!found.length) throw new Error('No learners found. The first row should have headings such as ADM No, Name, Gender, Parent phone.');
+      $('#preview').innerHTML = `
+        <div class="card" style="border-color:var(--accent)">
+          <p style="margin-top:0"><strong>${found.length} learner(s)</strong> found in ${esc(file.name)}${unknown.length ? `. Ignored columns: ${unknown.map(esc).join(', ')}` : ''}.</p>
+          <div class="table-wrap"><table><thead><tr><th>ADM</th><th>Assessment no.</th><th>First name</th><th>Last name</th><th>Gender</th><th>Parent</th><th>Phone</th></tr></thead>
+          <tbody>${found.slice(0, 5).map(l => `<tr><td>${esc(l.adm_no || '')}</td><td>${esc(l.assessment_no || '')}</td><td>${esc(l.first_name || '')}</td><td>${esc(l.last_name || '')}</td>
+            <td>${esc(l.gender || '')}</td><td>${esc(l.parent_name || '')}</td><td>${esc(l.parent_phone || '')}</td></tr>`).join('')}</tbody></table></div>
+          ${found.length > 5 ? `<p class="muted">…and ${found.length - 5} more.</p>` : ''}
+          <p class="row"><button id="add-xls">Add these ${found.length} learners</button><button class="secondary" id="cancel-xls">Cancel</button></p>
+        </div>`;
+      $('#cancel-xls').onclick = () => { $('#preview').innerHTML = ''; };
+      $('#add-xls').onclick = action($('#add-xls'), $('#m'), () => addLearners(found));
+    } catch (err) { notice($('#m'), err); }
+  };
 
   // Edit a learner in place; changing the class moves them.
   $$('[data-edit]').forEach(b => {
