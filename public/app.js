@@ -82,14 +82,14 @@ function loadScript(src) {
     const el = document.createElement('script');
     el.src = src;
     el.onload = resolve;
-    el.onerror = () => { delete loaded[src]; reject(new Error('Could not load a component; check the internet connection')); };
+    el.onerror = () => { delete loaded[src]; reject(new Error('Could not load a component; check the internet connection and try again')); };
     document.head.appendChild(el);
   });
   return loaded[src];
 }
-const SHEETJS = 'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js';
-const PDF_LIBS = ['https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js',
-  'https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js', 'https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js'];
+// Served from our own site (public/vendor), so no outside code runs in the app.
+const SHEETJS = '/vendor/xlsx.full.min.js';
+const PDF_LIBS = ['/vendor/html2canvas.min.js', '/vendor/jspdf.umd.min.js', '/vendor/jszip.min.js'];
 const safeName = s => String(s).replace(/[\\/:*?"<>|]+/g, '').replace(/\s+/g, ' ').trim();
 
 function downloadBlob(blob, name) {

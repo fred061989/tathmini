@@ -8,7 +8,7 @@ const { call } = require('./helpers/call');
 const fake = createFake();
 const supabasePath = require.resolve('@supabase/supabase-js');
 require.cache[supabasePath] = { id: supabasePath, filename: supabasePath, loaded: true, exports: { createClient: () => fake } };
-process.env.STATE_SECRET = 'test-secret';
+process.env.STATE_SECRET = 'test-secret-that-is-long-enough';
 process.env.PLATFORM_OWNER_EMAILS = 'owner@tathmini.co.ke';
 process.env.LEARNER_FEE_KES = '50';
 process.env.LEARNER_TERM_FEE_KES = '20';
@@ -368,4 +368,50 @@ test('getting started checklist reflects what the school has done', async () => 
   // The first school is fully set up
   const first = ok(await admin('GET', '/api/setup-status'));
   assert.ok(first.steps.find(x => x.key === 'analysed').done);
+});
+
+test('security: input checks, sign-in state, other schools', async () => {
+  const cls = fake.store.classes.find(c => c.grade === 7 && c.stream === 'East');
+  assert.equal((await admin('POST', '/api/staff', { full_name: 'X', email: 'not an email' })).status, 400);
+  assert.equal((await admin('POST', '/api/classes', { grade: 15, year: 2027 })).status, 400);
+  assert.equal((await admin('POST', '/api/classes', { grade: 'abc', year: 2027 })).status, 400);
+  const many = Array.from({ length: 2001 }, (_, i) => ({ first_name: 'A', last_name: String(i) }));
+  assert.equal((await admin('POST', '/api/learners', { class_id: cls.id, learners: many })).status, 400);
+  const asg = fake.store.teacher_assignments.find(a => a.class_id === cls.id);
+  const comps = Array.from({ length: 41 }, (_, i) => ({ label: `S${i}`, max_score: 10 }));
+  assert.equal((await admin('POST', '/api/assessments', { assignment_ids: [asg.id], kind: 'monthly', term: 1, year: cls.year, per_strand: true, components: comps })).status, 400);
+  assert.equal((await admin('POST', '/api/assessments', { assignment_ids: [asg.id], kind: 'monthly', term: 4, year: cls.year, max_score: 10 })).status, 400);
+  assert.equal((await admin('POST', '/api/assessments', { assignment_ids: [asg.id], kind: 'monthly', term: 1, year: cls.year, max_score: 5000 })).status, 400);
+  assert.equal((await admin('PUT', '/api/terms', { year: cls.year, term: 1, closing_date: '<script>' })).status, 400);
+  assert.equal((await admin('POST', '/api/billing/quote', { learner_ids: 'everyone', year: cls.year, term: 1, plan: 'term' })).status, 400);
+  assert.equal((await owner('POST', `/api/owner/schools/${fake.store.schools[0].id}/balance`, { amount_kes: 1e12 })).status, 400);
+  assert.equal((await admin('PUT', '/api/report-comments', { learner_id: fake.store.learners[0].id, year: cls.year, term: 9 })).status, 400);
+
+  // Another school's admin cannot see or touch this school's records
+  const other = as('new-admin');
+  const learner = fake.store.learners.find(l => l.school_id === fake.store.schools[0].id);
+  const a = fake.store.assessments.find(x => x.school_id === fake.store.schools[0].id);
+  for (const [m, url, body] of [
+    ['GET', `/api/assessments/${a.id}`], ['POST', `/api/assessments/${a.id}/analyse`, {}], ['DELETE', `/api/assessments/${a.id}`],
+    ['PATCH', `/api/learners/${learner.id}`, { first_name: 'Hacked' }], ['GET', `/api/classes/${cls.id}/term?year=${cls.year}&term=1`],
+    ['GET', `/api/reports/termly?class_id=${cls.id}&year=${cls.year}&term=1`], ['POST', `/api/classes/${cls.id}/promote`, { mode: 'complete' }],
+    ['PUT', '/api/report-comments', { learner_id: learner.id, year: cls.year, term: 1, class_comment: 'x' }],
+    ['POST', '/api/billing/pay', { learner_ids: [learner.id], year: cls.year, term: 1, plan: 'term' }],
+  ]) {
+    const r = await other(m, url, body);
+    assert.ok([400, 404].includes(r.status), `${m} ${url} → ${r.status}`);
+  }
+  assert.notEqual(fake.store.learners.find(l => l.id === learner.id).first_name, 'Hacked');
+
+  // Google sign-in state: forged, tampered or missing secret
+  const { signState, verifyState } = require('../lib/auth');
+  const good = signState({ school_id: 's1' });
+  assert.equal(verifyState(good).school_id, 's1');
+  assert.throws(() => verifyState(good.slice(0, -2) + 'xx'), /Invalid state/);
+  assert.throws(() => verifyState('bm90LWpzb24.abc'), /Invalid state/);
+  assert.equal((await call(api, 'GET', '/api/google/callback?code=x&state=abc.def', null, {})).status, 400);
+  const saved = process.env.STATE_SECRET;
+  process.env.STATE_SECRET = 'change-me';
+  assert.throws(() => signState({}), /STATE_SECRET/);
+  process.env.STATE_SECRET = saved;
 });

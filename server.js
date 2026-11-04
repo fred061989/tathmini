@@ -13,10 +13,12 @@ if (fs.existsSync('.env')) {
 }
 
 const api = require('./api/index');
+const SECURITY_HEADERS = require('./lib/security-headers.json');
 const PUBLIC = path.join(__dirname, 'public');
 const TYPES = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml' };
 
 http.createServer((req, res) => {
+  for (const [k, v] of Object.entries(SECURITY_HEADERS)) if (k !== 'Strict-Transport-Security') res.setHeader(k, v);
   if (req.url.startsWith('/api/')) return api(req, res);
   const urlPath = decodeURIComponent(new URL(req.url, 'http://localhost').pathname);
   const file = path.join(PUBLIC, urlPath === '/' ? 'index.html' : urlPath);
