@@ -124,7 +124,9 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
 .rf .dates { display: flex; justify-content: center; gap: 30px; margin-top: 4mm; padding: 6px; background: #f3f6f4; border-radius: 6px; font-size: 11px; }
 .rf .dates b { color: #15532f; }
 .rf .foot { margin-top: 3mm; border-top: 1px solid #dfe4e0; padding-top: 4px; font-size: 8.5px; color: #5e6a63; display: flex; justify-content: space-between; gap: 10px; }
-@media (max-width: 800px) { .rf { padding: 16px; } .rf .facts { grid-template-columns: 1fr 1fr; } .rf .grid2, .rf .comments { grid-template-columns: 1fr; } }
+/* Off-screen copy used to make PDFs: always exactly one A4 page, whatever the screen size. */
+.rf.capture { position: fixed; left: -10000px; top: 0; width: 210mm; height: 297mm; max-width: none; margin: 0; border: 0; border-radius: 0; overflow: hidden; }
+@media (max-width: 800px) { .rf:not(.capture) { padding: 16px; } .rf:not(.capture) .facts { grid-template-columns: 1fr 1fr; } .rf:not(.capture) .grid2, .rf:not(.capture) .comments { grid-template-columns: 1fr; } }
 
 @page { size: A4; margin: 0; }
 @media print {

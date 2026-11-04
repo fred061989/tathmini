@@ -88,6 +88,9 @@ function loadScript(src) {
   return loaded[src];
 }
 const SHEETJS = 'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js';
+const PDF_LIBS = ['https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js',
+  'https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js', 'https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js'];
+const safeName = s => String(s).replace(/[\\/:*?"<>|]+/g, '').replace(/\s+/g, ' ').trim();
 
 function downloadBlob(blob, name) {
   const a = document.createElement('a');
@@ -540,7 +543,7 @@ async function renderReports() {
         ${closed ? '' : '<button class="secondary">Save dates</button>'}
       </form>
       <div class="row" style="margin-top:12px">
-        ${r.reports.length ? `<a class="btn" href="#report?${q}">Print all ${r.reports.length} report forms</a>` : ''}
+        ${r.reports.length ? `<a class="btn" href="#report?${q}">Print or download all ${r.reports.length} report forms</a>` : ''}
         ${closed ? '<button class="secondary" id="reopen">Reopen term</button>' : '<button class="secondary" id="close">Close term</button>'}
       </div>
       <div id="tm" style="margin-top:8px"></div>
@@ -674,6 +677,38 @@ function reportForm(x, r) {
   </section>`;
 }
 
+// Makes one A4 PDF per report form (drawn exactly as printed) and downloads them, as a ZIP when there are several.
+async function downloadReportPdfs(r, msg) {
+  for (const src of PDF_LIBS) await loadScript(src);
+  const { jsPDF } = window.jspdf;
+  const zip = new JSZip();
+  const period = `Term ${r.term} ${r.year}`;
+  const holder = document.createElement('div');
+  document.body.appendChild(holder);
+  try {
+    for (const [i, x] of r.reports.entries()) {
+      msg.className = 'notice';
+      msg.textContent = `Making PDF ${i + 1} of ${r.reports.length} (${x.name})…`;
+      holder.innerHTML = reportForm(x, r);
+      const page = holder.firstElementChild;
+      page.classList.add('capture');
+      const canvas = await html2canvas(page, { scale: 2, backgroundColor: '#ffffff', useCORS: true, logging: false });
+      const pdf = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4', compress: true });
+      pdf.addImage(canvas.toDataURL('image/jpeg', 0.92), 'JPEG', 0, 0, 210, 297);
+      const name = safeName(`${x.adm_no ? x.adm_no + ' ' : ''}${x.name} - ${period}.pdf`);
+      if (r.reports.length === 1) { downloadBlob(pdf.output('blob'), name); msg.textContent = `Downloaded ${name}.`; return; }
+      zip.file(name, pdf.output('arraybuffer'));
+    }
+    msg.textContent = 'Putting the PDFs into one ZIP file…';
+    const blob = await zip.generateAsync({ type: 'blob' });
+    const zipName = safeName(`${r.class.label} - ${period} - report forms.zip`);
+    downloadBlob(blob, zipName);
+    msg.textContent = `Downloaded ${zipName} with ${r.reports.length} PDFs.`;
+  } finally {
+    holder.remove();
+  }
+}
+
 async function renderReportForms() {
   const q = hashParams();
   const sel = { class: q.get('class'), term: q.get('term'), year: q.get('year'), learner: q.get('learner') };
@@ -681,9 +716,11 @@ async function renderReportForms() {
   view().innerHTML = `
     <div class="report-bar no-print">
       <a href="#reports?class=${sel.class}&term=${sel.term}&year=${sel.year}">← Report forms</a><span style="flex:1"></span>
-      <span class="muted">${r.reports.length} report form${r.reports.length === 1 ? '' : 's'} · choose “Save as PDF” in the print window to download</span>
-      <button id="print">Print / Download PDF</button>
+      <span class="muted">${r.reports.length} report form${r.reports.length === 1 ? '' : 's'}</span>
+      <button id="print">Print</button>
+      ${r.reports.length ? `<button class="secondary" id="zip">${r.reports.length === 1 ? 'Download PDF' : 'Download ZIP (one PDF per learner)'}</button>` : ''}
     </div>
+    <div id="zm" class="no-print"></div>
     ${r.reports.map(x => reportForm(x, r)).join('') || '<p class="muted">No results for this class and term yet.</p>'}`;
   $('#print').onclick = () => {
     const before = document.title;
@@ -691,6 +728,7 @@ async function renderReportForms() {
     window.print();
     document.title = before;
   };
+  if ($('#zip')) $('#zip').onclick = action($('#zip'), $('#zm'), () => downloadReportPdfs(r, $('#zm')));
 }
 
 // ---------- Classes and learners ----------
