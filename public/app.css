@@ -79,6 +79,7 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
 .rf .head { display: grid; grid-template-columns: 64px 1fr 64px; align-items: center; gap: 14px; padding: 2mm 0 5mm; }
 .rf .crest { width: 62px; height: 62px; border-radius: 50%; border: 2.5px solid #1f7a4d; display: grid; place-items: center;
   font-weight: 800; color: #1f7a4d; font-size: 18px; letter-spacing: .02em; }
+.rf .logo { width: 62px; height: 62px; object-fit: contain; }
 .rf .school { text-align: center; }
 .rf .school .name { font-size: 21px; font-weight: 800; letter-spacing: .06em; color: #15532f; text-transform: uppercase; }
 .rf .school .meta { color: #4f5b55; margin-top: 3px; font-size: 10.5px; }

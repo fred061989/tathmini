@@ -587,7 +587,7 @@ function reportForm(x, r) {
   return `
   <section class="rf">
     <div class="head">
-      <div class="crest">${esc(crest)}</div>
+      ${sch.logo ? `<img class="logo" src="${esc(sch.logo)}" alt="">` : `<div class="crest">${esc(crest)}</div>`}
       <div class="school"><div class="name">${esc(sch.name)}</div>${meta ? `<div class="meta">${meta}</div>` : ''}${sch.motto ? `<div class="motto">“${esc(sch.motto)}”</div>` : ''}</div>
       <div></div>
     </div>
@@ -964,6 +964,26 @@ async function renderCurriculum() {
   });
 }
 
+// Resizes an image file in the browser so the stored logo stays small; keeps transparency (PNG).
+function shrinkImage(file, size) {
+  return new Promise((resolve, reject) => {
+    if (!/^image\//.test(file.type)) return reject(new Error('Choose an image file (PNG or JPEG)'));
+    const img = new Image();
+    img.onload = () => {
+      const scale = Math.min(1, size / Math.max(img.width, img.height));
+      const canvas = document.createElement('canvas');
+      canvas.width = Math.round(img.width * scale);
+      canvas.height = Math.round(img.height * scale);
+      canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
+      const png = canvas.toDataURL('image/png');
+      resolve(png.length < 300 * 1024 ? png : canvas.toDataURL('image/jpeg', 0.85));
+      URL.revokeObjectURL(img.src);
+    };
+    img.onerror = () => reject(new Error('That image could not be read'));
+    img.src = URL.createObjectURL(file);
+  });
+}
+
 // ---------- Settings: Google, school details, billing, grading ----------
 
 async function renderSettings() {
@@ -998,6 +1018,13 @@ async function renderSettings() {
         <p><button>Save</button></p>
       </form>
       <div id="m"></div>
+      <h2>School logo</h2>
+      <div class="row">
+        ${s.logo ? `<img src="${esc(s.logo)}" alt="School logo" style="width:72px;height:72px;object-fit:contain;border:1px solid var(--border);border-radius:8px;background:#fff">` : '<span class="muted">No logo yet: report forms show the school\'s initials.</span>'}
+        <label class="btn secondary" style="flex-direction:row;color:var(--accent)">${s.logo ? 'Change logo' : 'Upload logo'}<input type="file" id="logo" accept="image/*" hidden></label>
+        ${s.logo ? '<button class="danger" id="nologo">Remove logo</button>' : ''}
+      </div>
+      <div id="lm"></div>
     </div>
     <div class="card">
       <h2 style="margin-top:0">Billing</h2>
@@ -1032,6 +1059,17 @@ async function renderSettings() {
       </form>
       <div id="grm"></div>
     </div>`;
+  $('#logo').onchange = async e => {
+    const file = e.target.files[0];
+    if (!file) return;
+    try {
+      const logo = await shrinkImage(file, 300);
+      await api('PATCH', '/api/school', { logo });
+      await loadMe();
+      route();
+    } catch (err) { notice($('#lm'), err); }
+  };
+  if ($('#nologo')) $('#nologo').onclick = action($('#nologo'), $('#lm'), async () => { await api('PATCH', '/api/school', { logo: null }); await loadMe(); route(); });
   if ($('#gcon')) $('#gcon').onclick = action($('#gcon'), $('#gm'), async () => { location.href = (await api('GET', '/api/google/connect')).url; });
   if ($('#gdis')) $('#gdis').onclick = action($('#gdis'), $('#gm'), async () => { await api('POST', '/api/google/disconnect'); route(); });
   const f = $('#f');

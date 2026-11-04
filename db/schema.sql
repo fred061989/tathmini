@@ -14,6 +14,7 @@ CREATE TABLE IF NOT EXISTS schools (
   email TEXT,
   motto TEXT,
   head_teacher_name TEXT,
+  logo TEXT,                             -- small image (data URL), printed on report forms
   grading JSONB NOT NULL DEFAULT '{}',   -- threshold overrides, e.g. {"cbc4":{"EE":75,"ME":50,"AE":25}}
   google_refresh_token TEXT,             -- the school's Google account (drive.file scope)
   google_email TEXT,

@@ -341,3 +341,15 @@ test('deleting an assessment removes its results; not allowed once the term is c
   ok(await admin('DELETE', `/api/assessments/${analysed.id}`));
   assert.ok(!(fake.store.results || []).some(r => r.assessment_id === analysed.id));
 });
+
+test('school logo: only small real images are accepted, and it reaches the report form', async () => {
+  const png = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
+  assert.equal(ok(await admin('PATCH', '/api/school', { logo: png })).school.logo, png);
+  for (const bad of ['javascript:alert(1)', 'data:image/svg+xml;base64,PHN2Zz4=', 'data:image/png;base64,abc"onerror="x', 'data:text/html;base64,PGI+', `data:image/png;base64,${'A'.repeat(500 * 1024)}`]) {
+    assert.equal((await admin('PATCH', '/api/school', { logo: bad })).status, 400, bad.slice(0, 30));
+  }
+  const cls = fake.store.classes.find(c => c.grade === 7 && c.stream === 'East');
+  assert.equal(ok(await admin('GET', `/api/reports/termly?class_id=${cls.id}&year=${cls.year}&term=1`)).school.logo, png);
+  assert.equal(ok(await admin('PATCH', '/api/school', { logo: null })).school.logo, null);
+  assert.equal((await admin('PATCH', '/api/school', { name: '  ' })).status, 400);
+});
