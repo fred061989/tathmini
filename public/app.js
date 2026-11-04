@@ -608,7 +608,8 @@ async function renderReportForms() {
 // ---------- Classes and learners ----------
 
 async function renderClasses() {
-  const [classes, staff] = await Promise.all([api('GET', '/api/classes'), api('GET', '/api/staff')]);
+  const [classes, allStaff] = await Promise.all([api('GET', '/api/classes'), api('GET', '/api/staff')]);
+  const staff = allStaff.filter(x => x.active);
   view().innerHTML = `
     <h1>Classes & learners</h1>
     <div class="card">
@@ -756,6 +757,14 @@ async function renderClass(id) {
 async function renderTeachers() {
   const [staff, classes, areas, assignments] = await Promise.all([api('GET', '/api/staff'), api('GET', '/api/classes'), api('GET', '/api/curriculum'), api('GET', '/api/assignments')]);
   const opts = (xs, label) => xs.map(x => `<option value="${x.id}">${esc(label(x))}</option>`).join('');
+  const active = staff.filter(s => s.active);
+  const removed = staff.filter(s => !s.active);
+  const orphaned = assignments.filter(a => a.staff && a.staff.active === false);
+  const staffRow = s => `<tr data-row="${s.id}"><td>${esc(s.full_name)}</td><td>${esc(s.email)}</td><td>${esc(s.phone || '')}</td>
+    <td>${s.role === 'admin' ? 'Admin' : 'Teacher'}</td>
+    <td class="row" style="flex-wrap:nowrap">${s.active
+      ? `<button class="secondary" data-edit="${s.id}">Edit</button>${s.id === S.staff.id ? '' : `<button class="danger" data-remove="${s.id}">Remove</button>`}`
+      : `<button class="secondary" data-restore="${s.id}">Restore</button>`}</td></tr>`;
   view().innerHTML = `
     <h1>Teachers</h1>
     <div class="card">
@@ -768,32 +777,67 @@ async function renderTeachers() {
       </form>
       <div id="m1"></div>
     </div>
+    <div id="sm"></div>
     <div class="table-wrap"><table>
-      <thead><tr><th>Name</th><th>Email</th><th>Phone</th><th>Role</th></tr></thead>
-      <tbody>${staff.map(s => `<tr><td>${esc(s.full_name)}</td><td>${esc(s.email)}</td><td>${esc(s.phone || '')}</td><td>${s.role === 'admin' ? 'Admin' : 'Teacher'}</td></tr>`).join('')}</tbody>
+      <thead><tr><th>Name</th><th>Email</th><th>Phone</th><th>Role</th><th></th></tr></thead>
+      <tbody>${active.map(staffRow).join('')}</tbody>
     </table></div>
+    ${removed.length ? `<h2 class="muted">Removed (${removed.length})</h2><div class="table-wrap"><table class="muted"><tbody>${removed.map(staffRow).join('')}</tbody></table></div>` : ''}
     <h2>Who teaches what</h2>
+    ${orphaned.length ? `<div class="notice error">${orphaned.length} learning area(s) belong to a removed teacher: ${orphaned.map(a => `${esc(a.learning_areas.name)} in ${esc(classLabel(a.classes))}`).join('; ')}. Assign them to another teacher below.</div>` : ''}
     <div class="card">
       <form id="asg" class="inline">
-        <label>Teacher <select name="teacher_id">${opts(staff, s => s.full_name)}</select></label>
+        <label>Teacher <select name="teacher_id">${opts(active, s => s.full_name)}</select></label>
         <label>Class <select name="class_id">${opts(classes, classLabel)}</select></label>
         <label>Learning area <select name="learning_area_id"></select></label>
         <button>Assign</button>
       </form>
+      <p class="muted" style="margin-bottom:0">Assigning a learning area that already has a teacher in that class hands it over to the new teacher.</p>
       <div id="m2"></div>
     </div>
     <div class="table-wrap"><table>
       <thead><tr><th>Class</th><th>Learning area</th><th>Teacher</th><th></th></tr></thead>
       <tbody>${assignments.sort((a, b) => classLabel(a.classes).localeCompare(classLabel(b.classes)) || a.learning_areas.name.localeCompare(b.learning_areas.name)).map(x => `<tr>
-        <td>${esc(classLabel(x.classes))}</td><td>${esc(x.learning_areas.name)}</td><td>${esc(x.staff.full_name)}</td>
+        <td>${esc(classLabel(x.classes))}</td><td>${esc(x.learning_areas.name)}</td>
+        <td>${esc(x.staff.full_name)}${x.staff.active === false ? ' <span class="pill" style="color:var(--danger)">removed</span>' : ''}</td>
         <td><button class="danger" data-del="${x.id}">Remove</button></td></tr>`).join('') || '<tr><td colspan="4" class="muted">No assignments yet.</td></tr>'}</tbody>
     </table></div>`;
+
   const inv = $('#inv');
   inv.onsubmit = action($('button', inv), $('#m1'), async () => {
     const out = await api('POST', '/api/staff', Object.fromEntries(new FormData(inv)));
     await route();
     notice($('#m1'), null, out.staff.role === 'admin' ? 'Admin added and sent a sign-in email.' : 'Teacher added. Assign their learning areas below.');
   });
+  $$('[data-edit]').forEach(b => {
+    b.onclick = () => {
+      const t = staff.find(x => x.id === b.dataset.edit);
+      const row = $(`[data-row="${t.id}"]`);
+      row.innerHTML = `<td colspan="5"><form class="inline" data-form>
+        <label>Full name <input name="full_name" value="${esc(t.full_name)}" required></label>
+        <label>Gmail <input name="email" type="email" value="${esc(t.email)}" required></label>
+        <label>Phone <input name="phone" value="${esc(t.phone || '')}"></label>
+        <label>Role <select name="role" ${t.id === S.staff.id ? 'disabled' : ''}><option value="teacher" ${t.role === 'teacher' ? 'selected' : ''}>Teacher</option><option value="admin" ${t.role === 'admin' ? 'selected' : ''}>Admin</option></select></label>
+        <button>Save</button><button type="button" class="secondary" data-cancel>Cancel</button>
+      </form><p class="muted" style="margin:6px 0 0">A new Gmail only applies to sheets sent from now on.</p><div data-msg></div></td>`;
+      const f = $('[data-form]', row);
+      $('[data-cancel]', row).onclick = () => route();
+      f.onsubmit = action($('button', f), $('[data-msg]', row), async () => {
+        await api('PATCH', `/api/staff/${t.id}`, Object.fromEntries(new FormData(f)));
+        route();
+      });
+    };
+  });
+  $$('[data-remove]').forEach(b => {
+    b.onclick = action(b, $('#sm'), async () => {
+      const t = staff.find(x => x.id === b.dataset.remove);
+      const theirs = assignments.filter(a => a.teacher_id === t.id).length;
+      if (!confirm(`Remove ${t.full_name}? Use this when they leave.${theirs ? ` Their ${theirs} learning area(s) will need a new teacher.` : ''}`)) return;
+      await api('PATCH', `/api/staff/${t.id}`, { active: false });
+      route();
+    });
+  });
+  $$('[data-restore]').forEach(b => { b.onclick = action(b, $('#sm'), async () => { await api('PATCH', `/api/staff/${b.dataset.restore}`, { active: true }); route(); }); });
   const asg = $('#asg');
   const fillAreas = () => {
     const cls = classes.find(c => c.id === asg.class_id.value);

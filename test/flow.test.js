@@ -273,3 +273,26 @@ test('promoting a class keeps old report forms; a final class can be marked comp
   assert.equal(fake.store.learners.find(l => l.id === amani.id).active, false);
   assert.equal((await admin('POST', `/api/classes/${w.class.id}/promote`, { mode: 'x' })).status, 400);
 });
+
+test('managing teachers: edit, remove, and reassign their learning areas', async () => {
+  const t = ok(await admin('POST', '/api/staff', { full_name: 'Tom Leaver', email: 'tom@gmail.com' })).staff;
+  const cls = ok(await admin('POST', '/api/classes', { grade: 7, stream: 'North', year: new Date().getFullYear() }));
+  const maths = ok(await admin('GET', '/api/curriculum')).find(a => a.name === 'Mathematics');
+  const asg = ok(await admin('POST', '/api/assignments', { teacher_id: t.id, class_id: cls.id, learning_area_id: maths.id }));
+  const edited = ok(await admin('PATCH', `/api/staff/${t.id}`, { full_name: 'Tom Leaver-Otieno', email: ' Tom.L@Gmail.com ', phone: '0700111222' }));
+  assert.deepEqual([edited.full_name, edited.email], ['Tom Leaver-Otieno', 'tom.l@gmail.com']);
+  assert.equal((await admin('PATCH', `/api/staff/${t.id}`, { email: 'not-an-email' })).status, 400);
+  assert.equal((await admin('PATCH', `/api/staff/${t.id}`, { role: 'owner' })).status, 400);
+  // The admin cannot remove themselves
+  const me = ok(await admin('GET', '/api/me')).staff;
+  assert.equal((await admin('PATCH', `/api/staff/${me.id}`, { active: false })).status, 400);
+
+  ok(await admin('PATCH', `/api/staff/${t.id}`, { active: false }));
+  const blocked = await admin('POST', '/api/assessments', { assignment_ids: [asg.id], kind: 'monthly', term: 1, year: cls.year, max_score: 10 });
+  assert.equal(blocked.status, 400);
+  assert.match(blocked.body.error, /Mathematics \(Tom Leaver-Otieno\): this teacher has been removed/);
+  assert.equal((await admin('POST', '/api/assignments', { teacher_id: t.id, class_id: cls.id, learning_area_id: maths.id })).status, 400);
+  const janet = fake.store.staff.find(s => s.full_name === 'Janet Wanjiku');
+  ok(await admin('POST', '/api/assignments', { teacher_id: janet.id, class_id: cls.id, learning_area_id: maths.id }));
+  assert.equal(fake.store.teacher_assignments.find(a => a.class_id === cls.id).teacher_id, janet.id);
+});
