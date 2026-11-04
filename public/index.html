@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Tathmini CBC</title>
+  <link rel="stylesheet" href="/app.css">
+</head>
+<body>
+  <div class="center">
+    <div class="card">
+      <h1>Tathmini <span style="color:var(--accent)">CBC</span></h1>
+      <p class="muted">Assessment records and termly report forms for CBC schools. Teachers enter scores in Google Sheets; the school analyses results and prints report forms.</p>
+      <form id="signin">
+        <label>School admin email <input type="email" name="email" required autocomplete="email"></label>
+        <p><button type="submit">Email me a sign-in link</button></p>
+      </form>
+      <div id="msg"></div>
+    </div>
+  </div>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
+  <script>
+    (async () => {
+      const cfg = await fetch('/api/config').then(r => r.json());
+      const sb = supabase.createClient(cfg.supabaseUrl, cfg.supabaseAnonKey);
+      const { data } = await sb.auth.getSession();
+      if (data.session) location.replace('/app.html');
+      document.getElementById('signin').addEventListener('submit', async e => {
+        e.preventDefault();
+        const email = e.target.email.value.trim();
+        const msg = document.getElementById('msg');
+        const { error } = await sb.auth.signInWithOtp({ email, options: { emailRedirectTo: location.origin + '/app.html' } });
+        msg.className = error ? 'notice error' : 'notice';
+        msg.textContent = error ? error.message : `Check ${email} for your sign-in link.`;
+      });
+    })();
+  </script>
+</body>
+</html>
