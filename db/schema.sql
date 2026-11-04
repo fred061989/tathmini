@@ -116,6 +116,7 @@ CREATE TABLE IF NOT EXISTS assessments (
   status TEXT NOT NULL DEFAULT 'draft' CHECK (status IN ('draft', 'sheet_ready', 'analysed')),
   sheet_id TEXT,
   sheet_url TEXT,
+  sheet_tab TEXT,                        -- the tab in the teacher's workbook (one workbook per teacher, a tab per learning area and class)
   summary JSONB,
   analysed_at TIMESTAMPTZ,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()

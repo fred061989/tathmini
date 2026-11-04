@@ -16,13 +16,19 @@ process.env.LEARNER_TERM_FEE_KES = '20';
 const sheets = require('../lib/sheets');
 const api = require('../api/index');
 
+// Stand-in for Google: records each workbook, and each tab (with its workbook's id and teacher) in `created`.
 const created = [];
+const workbooks = [];
 let sheetValues = null;
-sheets.createAssessmentSheet = async (token, args) => {
-  created.push(args);
-  return { spreadsheetId: `sheet-${created.length}`, url: `https://docs.google.com/spreadsheets/d/sheet-${created.length}/edit` };
+const reads = [];
+sheets.createWorkbook = async (token, args) => {
+  workbooks.push(args);
+  const id = `sheet-${workbooks.length}`;
+  const titles = sheets.tabTitles(args.tabs.map(t => t.title));
+  args.tabs.forEach((tab, i) => created.push({ ...tab, title: titles[i], spreadsheetId: id, shareWith: args.shareWith }));
+  return { spreadsheetId: id, url: `https://docs.google.com/spreadsheets/d/${id}/edit`, tabs: titles.map((title, i) => ({ title, sheetId: 100 + i })) };
 };
-sheets.readAssessmentSheet = async () => sheetValues;
+sheets.readAssessmentSheet = async (token, id, tab) => { reads.push({ id, tab }); return sheetValues; };
 const appended = [];
 sheets.addLearnersToSheet = async (token, id, args) => { appended.push({ id, ...args }); return { added: args.learners.length }; };
 
@@ -191,11 +197,22 @@ test('Phase 1 flow', async (t) => {
     assert.equal(both.length, 2);
     const mathEnd = both.find(c => c.assessment.learning_area_id === ids.math).assessment;
     const engEnd = both.find(c => c.assessment.learning_area_id === ids.eng).assessment;
-    const layoutFor = id => created.find((c, i) => `sheet-${i + 1}` === fake.store.assessments.find(a => a.id === id).sheet_id);
+    // Same teacher for both: ONE workbook, ONE email, a tab for each learning area
+    const wb = workbooks[workbooks.length - 1];
+    assert.equal(ok(await admin('GET', '/api/assessments')).filter(a => a.sheet_id === mathEnd.sheet_id).length, 2);
+    assert.equal(mathEnd.sheet_id, engEnd.sheet_id);
+    assert.deepEqual(wb.tabs.map(t => t.title), ['Mathematics – Grade 7 East', 'English – Grade 7 East']);
+    assert.match(wb.title, /^Kilimani JS - Janet Wanjiku - End-term Term 1 \d{4}$/);
+    assert.match(wb.message, /these 2 learning areas.*Mathematics – Grade 7 East; English – Grade 7 East/);
+    assert.equal(wb.shareWith, 'wanjiku@kilimani.sc.ke');
+    assert.deepEqual([mathEnd.sheet_tab, engEnd.sheet_tab], ['Mathematics – Grade 7 East', 'English – Grade 7 East']);
+    assert.match(engEnd.sheet_url, /#gid=101$/);
+    const layoutFor = id => { const a = fake.store.assessments.find(x => x.id === id); return created.find(c => c.spreadsheetId === a.sheet_id && c.title === a.sheet_tab); };
     for (const [a, marks] of [[mathEnd, { 'Amani Otieno': 80, 'Baraka Kamau': 50, 'Chebet Kiprop': 70 }], [engEnd, { 'Amani Otieno': 50, 'Baraka Kamau': 90, 'Chebet Kiprop': 85 }]]) {
       const layout = sheets.buildSheetLayout(layoutFor(a.id));
       sheetValues = [...layout.top, ...layout.rows.map(r => [...r.slice(0, 3), marks[r[2]], "", ""])];
       ok(await admin('POST', `/api/assessments/${a.id}/analyse`, {}));
+      assert.deepEqual(reads[reads.length - 1], { id: a.sheet_id, tab: a.sheet_tab }); // each assessment reads its own tab
     }
   });
 
@@ -476,6 +493,49 @@ test('only paid learners get a sheet row; learners paid later are added; the tea
   const bad = await admin('POST', `/api/assessments/${a.id}/analyse`, {});
   assert.equal(bad.status, 422);
   assert.match(bad.body.details[0], /Out of/);
+});
+
+test('one workbook per teacher: a tab for each learning area, each with its own strands', async () => {
+  const year = new Date().getFullYear();
+  const cls = ok(await admin('POST', '/api/classes', { grade: 7, stream: 'North', year }));
+  const added = ok(await admin('POST', '/api/learners', { class_id: cls.id, learners: [
+    { adm_no: '801', first_name: 'Kito', last_name: 'Mbugua' }, { adm_no: '802', first_name: 'Lulu', last_name: 'Achieng' }] }));
+  ok(await admin('POST', '/api/billing/pay', { learner_ids: added.added_ids, year, term: 1, plan: 'term', mpesa_code: 'NTH0000001' }));
+  const kirui = ok(await admin('POST', '/api/staff', { full_name: 'Peter Kirui', email: 'kirui@gmail.com' })).staff;
+  const janet = fake.store.staff.find(s => s.full_name === 'Janet Wanjiku');
+  const areas = ok(await admin('GET', '/api/curriculum?grade=7'));
+  const area = n => areas.find(a => a.name === n);
+  const asg = {};
+  for (const [n, t] of [['Mathematics', kirui], ['Christian Religious Education', kirui], ['Agriculture and Nutrition', kirui], ['English', janet]]) {
+    asg[n] = ok(await admin('POST', '/api/assignments', { teacher_id: t.id, class_id: cls.id, learning_area_id: area(n).id })).id;
+  }
+  // Curriculum strands where loaded (Maths, English); typed by the admin otherwise (CRE, Agriculture)
+  const typed = { 'Christian Religious Education': ['Creation', 'The Bible'], 'Agriculture and Nutrition': ['Conserving Our Environment', 'Food Production'] };
+  const strands = n => (area(n).strands.length ? area(n).strands.slice(0, 2).map(s => ({ label: s.name, strand_id: s.id, max_score: 20 }))
+    : typed[n].map(label => ({ label, max_score: 20 })));
+  // Several learning areas per strand at once need each area's own strands
+  assert.equal((await admin('POST', '/api/assessments', { assignment_ids: Object.values(asg), kind: 'custom', term: 1, year, per_strand: true })).status, 400);
+  const before = workbooks.length;
+  const out = ok(await admin('POST', '/api/assessments', { assignment_ids: Object.values(asg), kind: 'custom', term: 1, year, per_strand: true, due_on: `${year}-03-27`,
+    components_by_assignment: Object.fromEntries(Object.entries(asg).map(([n, id]) => [id, strands(n)])) }));
+  // Two teachers → two workbooks (two emails), not four
+  assert.equal(out.workbooks, 2);
+  const [kWb, jWb] = workbooks.slice(before);
+  assert.equal(kWb.shareWith, 'kirui@gmail.com');
+  assert.deepEqual(kWb.tabs.map(t => t.title), ['Mathematics – Grade 7 North', 'Christian Religious Education – Grade 7 North', 'Agriculture and Nutrition – Grade 7 North']);
+  assert.deepEqual(kWb.tabs.map(t => t.components.map(c => c.label)), ['Mathematics', 'Christian Religious Education', 'Agriculture and Nutrition'].map(n => strands(n).map(s => s.label)));
+  assert.match(kWb.title, /Peter Kirui/);
+  assert.match(kWb.message, /Please finish by 27 March/);
+  assert.deepEqual(jWb.tabs.map(t => t.title), ['English – Grade 7 North']);
+  assert.match(jWb.title, /English - Assessment Term 1/);
+  const sent = out.created.map(c => c.assessment);
+  assert.equal(new Set(sent.filter(a => a.teacher_id === kirui.id).map(a => a.sheet_id)).size, 1);
+  // A learner paid for later is added to their tab in the same workbook
+  const late = ok(await admin('POST', '/api/learners', { class_id: cls.id, learners: [{ adm_no: '803', first_name: 'Mosi', last_name: 'Tanui' }] })).added_ids;
+  const n = appended.length;
+  ok(await admin('POST', '/api/billing/pay', { learner_ids: late, year, term: 1, plan: 'term', mpesa_code: 'NTH0000002' }));
+  const tabs = appended.slice(n).filter(x => sent.some(a => a.sheet_id === x.id)).map(x => x.tab).sort();
+  assert.deepEqual(tabs, [...kWb.tabs.map(t => t.title), 'English – Grade 7 North'].sort());
 });
 
 test('getting started checklist reflects what the school has done', async () => {

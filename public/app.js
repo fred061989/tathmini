@@ -265,8 +265,8 @@ async function renderNewAssessment() {
   const byStrand = S.school.assessment_style === 'strands';
   view().innerHTML = `
     <h1>New assessment</h1>
-    <p class="muted">Choose the class and learning areas. A Google Sheet with the class list is created for each learning area and
-      shared with its teacher by Gmail. Teachers only type marks: the % and CBC level fill in by themselves.</p>
+    <p class="muted">Choose the class and learning areas. Each teacher gets <b>one</b> Google Sheet by Gmail, with a tab for each of their
+      learning areas (e.g. Maths, CRE and Agriculture in one sheet). Teachers only type marks: the % and CBC level fill in by themselves.</p>
     ${S.school.google_connected ? '' : '<div class="notice error">Google is not connected, so assessments will be saved as drafts. <a href="#settings">Connect it in Settings</a>.</div>'}
     <form id="na" class="card">
       <p><label>Class <select name="class_id" required><option value="">Choose…</option>${classes.map(c => `<option value="${c.id}">${esc(classLabel(c))}</option>`).join('')}</select></label></p>
@@ -283,42 +283,55 @@ async function renderNewAssessment() {
       <p><label>Title (optional, one learning area only) <input name="title" placeholder="Created automatically if left blank"></label></p>
       <p><label>Score by <select name="mode">
         <option value="total" ${byStrand ? '' : 'selected'}>Total marks</option>
-        <option value="strand" ${byStrand ? 'selected' : ''}>Each strand (one learning area at a time)</option>
-        <option value="sub">Each sub-strand (one learning area at a time)</option>
+        <option value="strand" ${byStrand ? 'selected' : ''}>Each strand</option>
+        <option value="sub">Each sub-strand</option>
       </select></label></p>
       ${byStrand ? '<p class="muted">Your school works out term results strand by strand (Settings), so score each strand. Marks scored as a total only count for a learning area with no strand marks.</p>' : ''}
       <div id="total"><label>Out of (maximum marks) <input name="max_score" type="number" min="1" value="100" style="width:120px"></label></div>
       <div id="strands" hidden>
-        <p class="muted">From the national curriculum for this grade. Remove what is not being assessed and set what each is out of
-          (the teacher can change it in row 2 of the sheet, e.g. if a test was out of 50):</p>
-        <div id="rows"></div>
-        <button type="button" class="secondary" id="add-strand">Add strand</button>
+        <p class="muted">From the national curriculum for this grade, for each learning area ticked. Remove what is not being assessed and set
+          what each is out of (the teacher can change it in row 2 of the sheet, e.g. if a test was out of 50):</p>
+        <div id="groups"></div>
       </div>
-      <p><button id="create">Create and send sheet</button></p>
+      <p><button id="create">Create and send</button> <span class="muted" id="sendinfo"></span></p>
       <div id="fm"></div>
     </form>`;
   const f = $('#na');
   const chosen = () => $$('[name=asg]:checked', f).map(i => assignments.find(x => x.id === i.value));
   const detailed = () => f.mode.value !== 'total';
 
+  // One block of strand rows per ticked learning area (kept when other areas are ticked or unticked).
   function fillStrands() {
+    const box = $('#groups');
+    if (!detailed()) { box.innerHTML = ''; return; }
     const sel = chosen();
-    if (!detailed() || sel.length !== 1) { $('#rows').innerHTML = ''; return; }
-    const asg = sel[0];
-    const area = areas.find(a => a.id === asg.learning_area_id);
-    const strands = (area?.strands || []).filter(st => st.grade === asg.classes.grade);
-    const rows = f.mode.value === 'sub'
-      ? strands.flatMap(st => (st.sub_strands.length ? st.sub_strands.map(ss => strandRow(ss.name, st.id, ss.id)) : [strandRow(st.name, st.id)]))
-      : strands.map(st => strandRow(st.name, st.id));
-    $('#rows').innerHTML = rows.join('') || strandRow('');
-    if (!strands.length) notice($('#fm'), null, 'No strands are loaded for this learning area and grade yet; type them in below.');
+    const mode = f.mode.value;
+    $$('.strand-group', box).forEach(g => { if (!sel.some(x => x.id === g.dataset.asg) || g.dataset.mode !== mode) g.remove(); });
+    for (const asg of sel) {
+      if ($(`.strand-group[data-asg="${asg.id}"]`, box)) continue;
+      const area = areas.find(a => a.id === asg.learning_area_id);
+      const strands = (area?.strands || []).filter(st => st.grade === asg.classes.grade);
+      const rows = mode === 'sub'
+        ? strands.flatMap(st => (st.sub_strands.length ? st.sub_strands.map(ss => strandRow(ss.name, st.id, ss.id)) : [strandRow(st.name, st.id)]))
+        : strands.map(st => strandRow(st.name, st.id));
+      box.insertAdjacentHTML('beforeend', `<div class="strand-group card" data-asg="${asg.id}" data-mode="${mode}">
+        <strong>${esc(asg.learning_areas.name)}</strong> <span class="muted">(${esc(asg.staff.full_name)})</span>
+        ${strands.length ? '' : '<p class="muted">No strands are loaded for this learning area and grade yet; type them in.</p>'}
+        <div data-rows>${rows.join('') || strandRow('')}</div>
+        <button type="button" class="secondary" data-add>Add strand</button></div>`);
+    }
+    // Same order as the ticked list
+    sel.forEach(asg => box.appendChild($(`.strand-group[data-asg="${asg.id}"]`, box)));
   }
   function sync() {
-    const n = chosen().length;
+    const sel = chosen();
     $('#strands').hidden = !detailed();
     $('#total').hidden = detailed();
-    $('#create').textContent = n > 1 ? `Create and send ${n} sheets` : 'Create and send sheet';
-    if (detailed() && n > 1) notice($('#fm'), new Error('Strand and sub-strand scoring works one learning area at a time. Tick a single learning area.'));
+    const teachers = new Set(sel.map(x => x.teacher_id)).size;
+    $('#create').textContent = 'Create and send';
+    $('#sendinfo').textContent = sel.length
+      ? `${sel.length} learning area${sel.length === 1 ? '' : 's'} → ${teachers} Google Sheet${teachers === 1 ? '' : 's'} (one per teacher, a tab per learning area)`
+      : '';
   }
   f.class_id.onchange = () => {
     const list = assignments.filter(x => x.class_id === f.class_id.value).sort((a, b) => a.learning_areas.name.localeCompare(b.learning_areas.name));
@@ -329,26 +342,35 @@ async function renderNewAssessment() {
     fillStrands(); sync();
   };
   f.addEventListener('change', e => { if (['asg', 'mode'].includes(e.target.name)) { $('#fm').innerHTML = ''; fillStrands(); sync(); } });
-  $('#add-strand').onclick = () => $('#rows').insertAdjacentHTML('beforeend', strandRow(''));
-  f.addEventListener('click', e => { if (e.target.matches('[data-remove]')) e.target.closest('.strand-row').remove(); });
+  f.addEventListener('click', e => {
+    if (e.target.matches('[data-remove]')) e.target.closest('.strand-row').remove();
+    if (e.target.matches('[data-add]')) $('[data-rows]', e.target.closest('.strand-group')).insertAdjacentHTML('beforeend', strandRow(''));
+  });
 
   f.onsubmit = action($('#create'), $('#fm'), async () => {
     const fd = Object.fromEntries(new FormData(f));
     const sel = chosen();
     if (!sel.length) throw new Error('Tick at least one learning area');
-    const components = detailed()
-      ? $$('.strand-row', f).map(r => ({ label: $('[name=label]', r).value.trim(), max_score: Number($('[name=max]', r).value),
-        strand_id: r.dataset.strand || null, sub_strand_id: r.dataset.sub || null })).filter(c => c.label)
-      : [];
-    if (detailed() && !components.length) throw new Error('Add at least one strand');
+    // Each learning area's own strands.
+    const byAsg = {};
+    if (detailed()) {
+      for (const g of $$('.strand-group', f)) {
+        const list = $$('.strand-row', g).map(r => ({ label: $('[name=label]', r).value.trim(), max_score: Number($('[name=max]', r).value),
+          strand_id: r.dataset.strand || null, sub_strand_id: r.dataset.sub || null })).filter(c => c.label);
+        if (!list.length) throw new Error(`Add at least one strand for ${$('strong', g).textContent}`);
+        byAsg[g.dataset.asg] = list;
+      }
+    }
     const out = await api('POST', '/api/assessments', {
       assignment_ids: sel.map(x => x.id), kind: fd.kind, term: fd.term, week: fd.week || null, year: fd.year,
-      assessed_on: fd.assessed_on, due_on: fd.due_on || null, title: fd.title, per_strand: detailed(), components, max_score: Number(fd.max_score),
+      assessed_on: fd.assessed_on, due_on: fd.due_on || null, title: fd.title, per_strand: detailed(),
+      components_by_assignment: detailed() ? byAsg : undefined, max_score: Number(fd.max_score),
     });
     const notes = out.created.filter(c => c.note).map(c => `${c.assessment.title}: ${c.note}`);
     if (out.created.length === 1 && !notes.length) { location.hash = `#assessment/${out.created[0].assessment.id}`; return; }
     location.hash = '#dashboard';
-    if (notes.length) setTimeout(() => notice($('#m'), { message: 'Some sheets were not created', details: notes }), 300);
+    if (notes.length) setTimeout(() => notice($('#m'), { message: 'Some learning areas were not sent', details: notes }), 300);
+    else if (out.workbooks) setTimeout(() => notice($('#m'), null, `Sent ${out.created.length} learning areas as ${out.workbooks} Google Sheet${out.workbooks === 1 ? '' : 's'} (one per teacher).`), 300);
   });
 }
 
@@ -1504,8 +1526,10 @@ async function renderHelp() {
         (marks scored ÷ marks possible) into a percentage and a CBC level.</li>
       <li><b>Only paid-for learners</b> get scores. Unpaid learners are listed, but no scores can be entered for them and they are not on
         teachers' sheets. When you pay for a learner later, they are added automatically to the bottom of every sheet already sent for that term.</li>
-      <li>Each teacher receives an email from Google with their sheet. They type marks, and <b>AB</b> in any box where a learner was absent (left out, not counted as zero). The sheet works out
-        each learner's % and CBC level as they type. Names are locked, and marks above the "Out of" are refused.</li>
+      <li>Each teacher receives <b>one</b> email from Google with <b>one</b> sheet for the assessment, with a tab at the bottom for each of their
+        learning areas and classes (e.g. Mathematics, CRE and Agriculture). Tick all the learning areas at once to send them together.</li>
+      <li>In each tab, the teacher types marks, and <b>AB</b> in any box where a learner was absent (left out, not counted as zero). The sheet works out
+        each learner's % and CBC level as they go. Names are locked, and marks above the "Out of" are refused.</li>
       <li>Teachers don't write comments: the report form shows a <b>rubric remark</b> for each learning area from the level
         (e.g. ME1 "Good work. Keep it up!"). Remarks are always encouraging; strand-by-strand schools also get the strand to focus on next.</li>
       <li>A teacher who cannot use Google Sheets can give you the marks on paper: open the assessment and press <b>Enter scores here</b>.</li>
