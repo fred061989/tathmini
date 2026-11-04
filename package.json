@@ -1,0 +1,19 @@
+{
+  "name": "tathmini",
+  "version": "1.0.0",
+  "description": "Tathmini CBC: assessment records and termly report forms for Kenyan CBC schools",
+  "private": true,
+  "scripts": {
+    "dev": "node server.js",
+    "test": "node --test test/*.test.js"
+  },
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "dependencies": {
+    "@googleapis/drive": "^27.0.0",
+    "@googleapis/sheets": "^18.1.2",
+    "@supabase/supabase-js": "^2.118.0",
+    "google-auth-library": "^11.3.3"
+  }
+}
