@@ -20,6 +20,8 @@ const thisYear = new Date().getFullYear();
 // Kenyan school terms: roughly Jan–Apr, May–Aug, Sep–Nov.
 const thisTerm = (m => (m <= 3 ? 1 : m <= 7 ? 2 : 3))(new Date().getMonth());
 const hashParams = () => new URLSearchParams(location.hash.split('?')[1] || '');
+// Term 0 means the whole year (end-of-year results and report forms).
+const periodLabel = (term, year) => (Number(term) === 0 ? `Year ${year}` : `Term ${term} ${year}`);
 
 async function api(method, path, body) {
   const { data } = await S.sb.auth.getSession();
@@ -66,13 +68,14 @@ function distBar(dist) {
 function periodPicker(classes, sel) {
   return `
     <label>Class <select name="class_id"><option value="">Choose…</option>${classes.map(c => `<option value="${c.id}" ${c.id === sel.class ? 'selected' : ''}>${esc(classLabel(c))}</option>`).join('')}</select></label>
-    <label>Term <select name="term">${[1, 2, 3].map(t => `<option value="${t}" ${Number(sel.term) === t ? 'selected' : ''}>Term ${t}</option>`).join('')}</select></label>
+    <label>Term <select name="term">${[1, 2, 3].map(t => `<option value="${t}" ${Number(sel.term) === t ? 'selected' : ''}>Term ${t}</option>`).join('')}
+      <option value="0" ${Number(sel.term) === 0 ? 'selected' : ''}>Whole year</option></select></label>
     <label>Year <input name="year" type="number" value="${esc(sel.year)}" style="width:90px"></label>`;
 }
 
 function readPeriod(defaults = {}) {
   const q = hashParams();
-  return { class: q.get('class') || defaults.class || '', term: Number(q.get('term') || thisTerm), year: Number(q.get('year') || thisYear) };
+  return { class: q.get('class') || defaults.class || '', term: Number(q.get('term') ?? thisTerm), year: Number(q.get('year') || thisYear) };
 }
 
 // Loads a script once, only when a feature needs it (Excel files, PDFs, ZIP).
@@ -259,6 +262,7 @@ async function renderDashboard() {
 
 async function renderNewAssessment() {
   const [classes, assignments, areas] = await Promise.all([api('GET', '/api/classes'), api('GET', '/api/assignments'), api('GET', '/api/curriculum')]);
+  const byStrand = S.school.assessment_style === 'strands';
   view().innerHTML = `
     <h1>New assessment</h1>
     <p class="muted">Choose the class and learning areas. A Google Sheet with the class list is created for each learning area and
@@ -268,7 +272,7 @@ async function renderNewAssessment() {
       <p><label>Class <select name="class_id" required><option value="">Choose…</option>${classes.map(c => `<option value="${c.id}">${esc(classLabel(c))}</option>`).join('')}</select></label></p>
       <div id="areas"></div>
       <div class="inline">
-        <label>Type <select name="kind">${Object.entries(KINDS).map(([k, v]) => `<option value="${k}" ${k === 'monthly' ? 'selected' : ''}>${v}</option>`).join('')}</select></label>
+        <label>Type <select name="kind">${Object.entries(KINDS).map(([k, v]) => `<option value="${k}" ${k === (byStrand ? 'weekly' : 'monthly') ? 'selected' : ''}>${v}</option>`).join('')}</select></label>
         <label>Term <select name="term">${[1, 2, 3].map(t => `<option ${t === thisTerm ? 'selected' : ''}>${t}</option>`).join('')}</select></label>
         <label>Week (optional) <input name="week" type="number" min="1" max="14" style="width:90px"></label>
         <label>Year <input name="year" type="number" value="${thisYear}" style="width:90px"></label>
@@ -276,10 +280,11 @@ async function renderNewAssessment() {
       </div>
       <p><label>Title (optional, one learning area only) <input name="title" placeholder="Created automatically if left blank"></label></p>
       <p><label>Score by <select name="mode">
-        <option value="total">Total marks</option>
-        <option value="strand">Each strand (one learning area at a time)</option>
+        <option value="total" ${byStrand ? '' : 'selected'}>Total marks</option>
+        <option value="strand" ${byStrand ? 'selected' : ''}>Each strand (one learning area at a time)</option>
         <option value="sub">Each sub-strand (one learning area at a time)</option>
       </select></label></p>
+      ${byStrand ? '<p class="muted">Your school works out term results strand by strand (Settings), so score each strand. Marks scored as a total only count for a learning area with no strand marks.</p>' : ''}
       <div id="total"><label>Out of (maximum marks) <input name="max_score" type="number" min="1" value="100" style="width:120px"></label></div>
       <div id="strands" hidden>
         <p class="muted">From the national curriculum for this grade. Remove what is not being assessed and set the maximum marks for each:</p>
@@ -487,7 +492,10 @@ async function renderResults() {
   view().innerHTML = `
     <h1 class="no-print">Class results</h1>
     <p class="muted no-print">The class teacher's sheet: every learner's term average per learning area, with class means.
-      Each assessment type (monthly, end-term…) counts once in a term average; absences are left out, not counted as zero.</p>
+      ${S.school.assessment_style === 'strands'
+    ? 'Your school works out term averages strand by strand: each strand\'s marks over the term are averaged, then the strands.'
+    : 'Each assessment type (monthly, end-term…) counts once in a term average.'} Absences are left out, not counted as zero.
+      Choose <b>Whole year</b> for Term 1, 2 and 3 and the year average.</p>
     <form id="pf" class="card inline no-print">${periodPicker(classes, sel)}<button>Show</button></form>
     <div id="m"></div><div id="out"></div>`;
   const f = $('#pf');
@@ -498,6 +506,7 @@ async function renderResults() {
     location.hash = `#results?class=${fd.class_id}&term=${fd.term}&year=${fd.year}`;
   };
   if (!sel.class) return;
+  if (sel.term === 0) return renderYearResults(sel);
   const s = await api('GET', `/api/classes/${sel.class}/term?year=${sel.year}&term=${sel.term}`);
   if (!s.assessments) { $('#out').innerHTML = `<p class="muted">No analysed assessments for ${esc(s.class.label)} in Term ${s.term} ${s.year} yet.</p>`; return; }
   $('#out').innerHTML = `
@@ -533,14 +542,61 @@ async function renderResults() {
     XLSX.utils.book_append_sheet(wb, ws, `Term ${s.term} ${s.year}`);
     XLSX.writeFile(wb, `${s.class.label} - Term ${s.term} ${s.year} results.xlsx`);
   });
-  // The class sheet prints landscape with margins; report forms print portrait edge to edge.
-  $('#print').onclick = () => {
-    const style = document.createElement('style');
-    style.textContent = '@page { size: A4 landscape; margin: 10mm; }';
-    document.head.appendChild(style);
-    window.print();
-    style.remove();
-  };
+  $('#print').onclick = printLandscape;
+}
+
+// The class sheet prints landscape with margins; report forms print portrait edge to edge.
+function printLandscape() {
+  const style = document.createElement('style');
+  style.textContent = '@page { size: A4 landscape; margin: 10mm; }';
+  document.head.appendChild(style);
+  window.print();
+  style.remove();
+}
+
+// The whole year: each learning area's year average (the mean of the terms with results), and each term's overall.
+async function renderYearResults(sel) {
+  const s = await api('GET', `/api/classes/${sel.class}/year?year=${sel.year}`);
+  if (!s.learners.length) { $('#out').innerHTML = `<p class="muted">No analysed assessments for ${esc(s.class.label)} in ${s.year} yet.</p>`; return; }
+  const termsOf = x => [1, 2, 3].map(t => `T${t} ${x.terms[t] == null ? '–' : pct(x.terms[t])}`).join(' · ');
+  $('#out').innerHTML = `
+    <div class="row no-print" style="margin-bottom:12px">
+      <button id="print">Print class sheet</button>
+      <button class="secondary" id="xlsx">Download Excel</button>
+      <a class="btn secondary" href="#reports?class=${sel.class}&term=0&year=${sel.year}">End-of-year report forms</a>
+    </div>
+    <div class="sheet-print">
+      <h2 style="margin-top:0">${esc(S.school.name)} · ${esc(s.class.label)} · Year ${s.year}</h2>
+      <p class="muted">Class teacher: ${esc(s.class.class_teacher || '–')} · Year average = the mean of Term 1, 2 and 3 (terms without results are left out) ·
+        Class mean ${pct(s.class_mean_percent)} ${pill(s.class_level)}</p>
+      <div class="table-wrap"><table>
+        <thead><tr><th>Learner</th><th>ADM</th>${s.areas.map(a => `<th class="num" title="${esc(a.name)}">${esc(a.code || a.name)}</th>`).join('')}
+          <th class="num">T1</th><th class="num">T2</th><th class="num">T3</th><th class="num">Year</th></tr></thead>
+        <tbody>
+          ${s.learners.map(l => `<tr><td>${esc(l.name)}</td><td>${esc(l.adm_no || '')}</td>
+            ${s.areas.map(a => { const x = l.areas[a.id]; return `<td class="num" title="${esc(termsOf(x))}">${x.average == null ? '<span class="muted">–</span>' : `${pct(x.average)} ${pill(x.level)}`}</td>`; }).join('')}
+            ${[1, 2, 3].map(t => `<td class="num">${pct(l.terms_overall[t])}</td>`).join('')}
+            <td class="num"><strong>${pct(l.overall_percent)}</strong> ${pill(l.overall_level)}</td></tr>`).join('')}
+          <tr><td colspan="2"><strong>Class mean</strong></td>${s.areas.map(a => `<td class="num"><strong>${pct(a.mean_percent)}</strong> ${pill(a.level)}</td>`).join('')}
+            <td colspan="3"></td><td class="num"><strong>${pct(s.class_mean_percent)}</strong> ${pill(s.class_level)}</td></tr>
+        </tbody></table></div>
+      <p class="muted">${s.areas.map(a => `${esc(a.code || '')} = ${esc(a.name)}`).join(' · ')} · T1–T3 = overall average each term</p>
+    </div>`;
+  $('#xlsx').onclick = action($('#xlsx'), $('#m'), async () => {
+    await loadScript(SHEETJS);
+    const head = ['Learner', 'ADM No', ...s.areas.flatMap(a => [`${a.code || a.name} T1`, `${a.code || a.name} T2`, `${a.code || a.name} T3`, `${a.name} year %`, `${a.code || a.name} level`]),
+      'Overall T1', 'Overall T2', 'Overall T3', 'Year %', 'Year level'];
+    const rows = s.learners.map(l => [l.name, l.adm_no || '',
+      ...s.areas.flatMap(a => { const x = l.areas[a.id]; return [x.terms[1] ?? '', x.terms[2] ?? '', x.terms[3] ?? '', x.average ?? '', x.level || '']; }),
+      l.terms_overall[1] ?? '', l.terms_overall[2] ?? '', l.terms_overall[3] ?? '', l.overall_percent ?? '', l.overall_level || '']);
+    rows.push(['Class mean', '', ...s.areas.flatMap(a => ['', '', '', a.mean_percent ?? '', a.level || '']), '', '', '', s.class_mean_percent ?? '', s.class_level || '']);
+    const ws = XLSX.utils.aoa_to_sheet([[`${S.school.name} · ${s.class.label} · Year ${s.year}`], [], head, ...rows]);
+    ws['!cols'] = [{ wch: 22 }, { wch: 8 }, ...head.slice(2).map(() => ({ wch: 10 }))];
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, `Year ${s.year}`);
+    XLSX.writeFile(wb, `${s.class.label} - Year ${s.year} results.xlsx`);
+  });
+  $('#print').onclick = printLandscape;
 }
 
 // ---------- Report forms: comments, term dates, closing the term ----------
@@ -550,8 +606,8 @@ async function renderReports() {
   const sel = readPeriod();
   view().innerHTML = `
     <h1>Report forms</h1>
-    <p class="muted">Termly report forms, one A4 page per learner. The class and head teacher's comments are drafted from each learner's
-      results; edit them here before printing. Close the term when the reports are final.</p>
+    <p class="muted">Report forms, one A4 page per learner: termly, or for the <b>whole year</b> (Term 1, 2, 3 and the year average).
+      The class and head teacher's comments are drafted from each learner's results; edit them here before printing. Close the term when the reports are final.</p>
     <form id="pf" class="card inline">${periodPicker(classes, sel)}<button>Show</button></form>
     <div id="m"></div><div id="out"></div>`;
   const f = $('#pf');
@@ -562,28 +618,31 @@ async function renderReports() {
     location.hash = `#reports?class=${fd.class_id}&term=${fd.term}&year=${fd.year}`;
   };
   if (!sel.class) return;
-  const r = await api('GET', `/api/reports/termly?class_id=${sel.class}&year=${sel.year}&term=${sel.term}`);
+  const annual = sel.term === 0;
+  const r = await api('GET', annual ? `/api/reports/annual?class_id=${sel.class}&year=${sel.year}` : `/api/reports/termly?class_id=${sel.class}&year=${sel.year}&term=${sel.term}`);
   const t = r.term_record;
   const closed = Boolean(t.closed_at);
   const q = `class=${sel.class}&term=${sel.term}&year=${sel.year}`;
   $('#out').innerHTML = `
     <div class="card">
       <div class="row" style="justify-content:space-between">
-        <strong>${esc(r.class.label)} · Term ${r.term} ${r.year}</strong>
-        <span class="pill" style="color:${closed ? 'var(--accent)' : 'var(--warn)'}">${closed ? 'Term closed: reports are final' : 'Term open: reports are provisional'}</span>
+        <strong>${esc(r.class.label)} · ${annual ? `End of year ${r.year}` : `Term ${r.term} ${r.year}`}</strong>
+        <span class="pill" style="color:${closed ? 'var(--accent)' : 'var(--warn)'}">${closed ? `${annual ? 'Term 3' : 'Term'} closed: reports are final` : `${annual ? 'Term 3' : 'Term'} open: reports are provisional`}</span>
       </div>
+      ${annual ? `<p class="muted">The year report uses Term 3's closing date and next-term date, and is final once Term 3 is closed.
+        <a href="#reports?class=${sel.class}&term=3&year=${sel.year}">Term 3 dates and closing</a></p>` : `
       <form id="tf" class="inline" style="margin-top:12px">
         <label>Closing date <input type="date" name="closing_date" value="${esc(t.closing_date || '')}" ${closed ? 'disabled' : ''}></label>
         <label>Next term begins <input type="date" name="next_term_date" value="${esc(t.next_term_date || '')}" ${closed ? 'disabled' : ''}></label>
         ${closed ? '' : '<button class="secondary">Save dates</button>'}
-      </form>
+      </form>`}
       <div class="row" style="margin-top:12px">
         ${r.reports.length ? `<a class="btn" href="#report?${q}">Print or download all ${r.reports.length} report forms</a>` : ''}
-        ${closed ? '<button class="secondary" id="reopen">Reopen term</button>' : '<button class="secondary" id="close">Close term</button>'}
+        ${annual ? '' : closed ? '<button class="secondary" id="reopen">Reopen term</button>' : '<button class="secondary" id="close">Close term</button>'}
       </div>
       <div id="tm" style="margin-top:8px"></div>
     </div>
-    ${r.reports.length ? '' : '<p class="muted">No analysed results for this class and term yet.</p>'}
+    ${r.reports.length ? '' : `<p class="muted">No analysed results for this class ${annual ? 'this year' : 'and term'} yet.</p>`}
     ${r.reports.map(x => `
       <div class="card" data-learner="${x.learner_id}">
         <div class="row" style="justify-content:space-between">
@@ -601,7 +660,7 @@ async function renderReports() {
 
   const tm = $('#tm');
   const tf = $('#tf');
-  if (!closed) {
+  if (tf && !closed) {
     tf.onsubmit = action($('button', tf), tm, async () => {
       await api('PUT', '/api/terms', { year: sel.year, term: sel.term, ...Object.fromEntries(new FormData(tf)) });
       notice(tm, null, 'Dates saved.');
@@ -649,6 +708,43 @@ const LEVEL_NAMES = { EE: 'Exceeding Expectations', ME: 'Meeting Expectations', 
 const rfPill = code => (code ? `<span class="pill l-${esc(code.slice(0, 2))}">${esc(code)}</span>` : '–');
 const longDate = d => (d ? new Date(d + 'T00:00:00').toLocaleDateString('en-KE', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }) : '____________________');
 
+const rfNum = v => (v == null ? '' : Math.round(v * 10) / 10);
+const rfComment = v => `<td class="comment">${esc(v.comment || '')}</td><td class="num">${esc(v.teacher_initials || '')}</td>`;
+
+function perfTable(x, r) {
+  const tail = '<col style="width:13mm"><col style="width:12mm"><col><col style="width:11mm">';
+  const head = label => `<th class="num">${label}</th><th class="num">Level</th><th style="text-align:left">Teacher's comment</th><th class="num">Init.</th>`;
+  const avg = v => `<td class="num avg">${rfNum(v.average)}</td><td class="num">${rfPill(v.level)}</td>`;
+  const overall = cols => `<tr class="overall"><td>OVERALL</td>${cols}<td class="num">${x.overall_percent ?? ''}</td><td class="num">${rfPill(x.overall_level)}</td><td colspan="2"></td></tr>`;
+  if (r.term === 0) {
+    return `<table class="perf"><colgroup><col style="width:34mm"><col style="width:11.5mm"><col style="width:11.5mm"><col style="width:11.5mm">${tail}</colgroup>
+      <thead><tr><th style="text-align:left">Learning area</th>${[1, 2, 3].map(t => `<th class="num">Term ${t}<br>%</th>`).join('')}${head('Year<br>average')}</tr></thead>
+      <tbody>${r.areas.map(a => { const v = x.areas[a.id]; return `<tr><td>${esc(a.name)}</td>${[1, 2, 3].map(t => `<td class="num">${rfNum(v.terms[t])}</td>`).join('')}${avg(v)}${rfComment(v)}</tr>`; }).join('')}
+        ${overall([1, 2, 3].map(t => `<td class="num">${rfNum(x.terms_overall[t])}</td>`).join(''))}</tbody></table>
+      <div class="note">Each term's average, and the year average: the mean of the terms with results (a term without assessments is left out, not counted as zero).
+        The overall average gives each learning area equal weight. CBC learners are not ranked.</div>`;
+  }
+  if (r.style === 'strands') {
+    return `<table class="perf"><colgroup><col style="width:34mm"><col style="width:62mm">${tail}</colgroup>
+      <thead><tr><th style="text-align:left">Learning area</th><th style="text-align:left">Strands (level)</th>${head('Term<br>average')}</tr></thead>
+      <tbody>${r.areas.map(a => { const v = x.areas[a.id]; const sts = (v.strands || []).filter(st => st.level);
+        return `<tr><td>${esc(a.name)}</td><td class="strands">${sts.map(st => `<span>${esc(st.name)} ${rfPill(st.level)}</span>`).join('')
+          || (v.cells?.absent ? '<span class="abs">ABS</span>' : v.average != null ? '<span class="note">Total marks (not by strand)</span>' : '')}</td>${avg(v)}${rfComment(v)}</tr>`; }).join('')}
+        ${overall('<td></td>')}</tbody></table>
+      <div class="note">Each strand's level comes from all of the learner's marks for that strand this term; the term average is the mean of the strands.
+        ABS = absent. The overall average gives each learning area equal weight. CBC learners are not ranked.</div>`;
+  }
+  return `<table class="perf"><colgroup><col style="width:34mm">${r.columns.map(() => '<col style="width:11.5mm">').join('')}${tail}</colgroup>
+      <thead><tr><th style="text-align:left">Learning area</th>${r.columns.map(c => `<th class="num">${esc(c.label)}<br>%</th>`).join('')}${head('Term<br>average')}</tr></thead>
+      <tbody>
+        ${r.areas.map(a => { const v = x.areas[a.id]; return `<tr><td>${esc(a.name)}</td>
+          ${r.columns.map(c => { const cell = v.cells[c.kind]; return `<td class="num">${!cell ? '' : cell.absent ? '<span class="abs">ABS</span>' : rfNum(cell.percent)}</td>`; }).join('')}
+          ${avg(v)}${rfComment(v)}</tr>`; }).join('')}
+        ${overall(`<td colspan="${r.columns.length}"></td>`)}
+      </tbody></table>
+    <div class="note">ABS = absent: left out of the average, not counted as zero. Each assessment type counts once in the term average, and the overall average gives each learning area equal weight. CBC learners are not ranked.</div>`;
+}
+
 function reportForm(x, r) {
   const sch = r.school;
   const crest = sch.name.split(/\s+/).filter(w => /^[A-Za-z]/.test(w) && !/^(of|and|the)$/i.test(w)).map(w => w[0]).join('').slice(0, 3).toUpperCase();
@@ -665,8 +761,8 @@ function reportForm(x, r) {
       <div class="school"><div class="name">${esc(sch.name)}</div>${meta ? `<div class="meta">${meta}</div>` : ''}${sch.motto ? `<div class="motto">“${esc(sch.motto)}”</div>` : ''}</div>
       <div></div>
     </div>
-    <div class="band">LEARNER'S TERMLY REPORT &nbsp;<span>· TERM ${r.term}, ${r.year}</span></div>
-    ${r.term_record.closed_at ? '' : '<div class="provisional">PROVISIONAL · TERM NOT YET CLOSED</div>'}
+    <div class="band">${r.term === 0 ? `LEARNER'S END OF YEAR REPORT &nbsp;<span>· ${r.year}</span>` : `LEARNER'S TERMLY REPORT &nbsp;<span>· TERM ${r.term}, ${r.year}</span>`}</div>
+    ${r.term_record.closed_at ? '' : `<div class="provisional">PROVISIONAL · ${r.term === 0 ? 'TERM 3' : 'TERM'} NOT YET CLOSED</div>`}
     <div class="facts">
       <div><span>Learner's name</span><b>${esc(x.name.toUpperCase())}</b></div>
       <div><span>ADM no.</span><b>${esc(x.adm_no || '–')}</b></div>
@@ -675,17 +771,7 @@ function reportForm(x, r) {
       <div><span>Class teacher</span><b>${esc(r.class.class_teacher || '–')}</b></div>
     </div>
     <h3>Performance by learning area</h3>
-    <table class="perf"><colgroup><col style="width:34mm">${r.columns.map(() => '<col style="width:11.5mm">').join('')}<col style="width:13mm"><col style="width:12mm"><col><col style="width:11mm"></colgroup>
-      <thead><tr><th style="text-align:left">Learning area</th>${r.columns.map(c => `<th class="num">${esc(c.label)}<br>%</th>`).join('')}
-        <th class="num">Term<br>average</th><th class="num">Level</th><th style="text-align:left">Teacher's comment</th><th class="num">Init.</th></tr></thead>
-      <tbody>
-        ${r.areas.map(a => { const v = x.areas[a.id]; return `<tr><td>${esc(a.name)}</td>
-          ${r.columns.map(c => { const cell = v.cells[c.kind]; return `<td class="num">${!cell ? '' : cell.absent ? '<span class="abs">ABS</span>' : Math.round(cell.percent * 10) / 10}</td>`; }).join('')}
-          <td class="num avg">${v.average ?? ''}</td><td class="num">${rfPill(v.level)}</td>
-          <td class="comment">${esc(v.comment || '')}</td><td class="num">${esc(v.teacher_initials || '')}</td></tr>`; }).join('')}
-        <tr class="overall"><td>OVERALL</td><td colspan="${r.columns.length}"></td><td class="num">${x.overall_percent ?? ''}</td><td class="num">${rfPill(x.overall_level)}</td><td colspan="2"></td></tr>
-      </tbody></table>
-    <div class="note">ABS = absent: left out of the average, not counted as zero. Each assessment type counts once in the term average, and the overall average gives each learning area equal weight. CBC learners are not ranked.</div>
+    ${perfTable(x, r)}
     <div class="grid2">
       <div class="box summary">
         <div><div class="big">${pct(x.overall_percent)}</div><div style="margin-top:4px">${rfPill(x.overall_level)}</div><div style="margin-top:3px;color:#4f5b55">${esc(x.overall_label || '')}</div></div>
@@ -707,7 +793,7 @@ function reportForm(x, r) {
       <div><h3>Head teacher's comment</h3><div class="comment-box">${esc(x.head_comment)}<div class="by">${esc(sch.head_teacher_name || '')}${sch.head_teacher_name ? ', ' : ''}Head teacher</div></div></div>
     </div>
     <div class="sign"><div>Class teacher's signature</div><div>Head teacher's signature</div><div>Parent / guardian's signature</div><div class="stamp">School stamp</div></div>
-    <div class="dates"><span>Closing date: <b>${esc(longDate(r.term_record.closing_date))}</b></span><span>Next term begins: <b>${esc(longDate(r.term_record.next_term_date))}</b></span></div>
+    <div class="dates"><span>Closing date: <b>${esc(longDate(r.term_record.closing_date))}</b></span><span>${r.term === 0 ? 'Next year begins' : 'Next term begins'}: <b>${esc(longDate(r.term_record.next_term_date))}</b></span></div>
     <div class="foot"><span>Levels follow the CBC ${key.id === 'cbc8' ? '8' : '4'}-level rubric. Report generated from the school's assessment records.</span><span>Tathmini CBC</span></div>
   </section>`;
 }
@@ -717,7 +803,7 @@ async function downloadReportPdfs(r, msg) {
   for (const src of PDF_LIBS) await loadScript(src);
   const { jsPDF } = window.jspdf;
   const zip = new JSZip();
-  const period = `Term ${r.term} ${r.year}`;
+  const period = periodLabel(r.term, r.year);
   const holder = document.createElement('div');
   document.body.appendChild(holder);
   try {
@@ -747,7 +833,9 @@ async function downloadReportPdfs(r, msg) {
 async function renderReportForms() {
   const q = hashParams();
   const sel = { class: q.get('class'), term: q.get('term'), year: q.get('year'), learner: q.get('learner') };
-  const r = await api('GET', `/api/reports/termly?class_id=${sel.class}&year=${sel.year}&term=${sel.term}${sel.learner ? `&learner_id=${sel.learner}` : ''}`);
+  const r = await api('GET', Number(sel.term) === 0
+    ? `/api/reports/annual?class_id=${sel.class}&year=${sel.year}${sel.learner ? `&learner_id=${sel.learner}` : ''}`
+    : `/api/reports/termly?class_id=${sel.class}&year=${sel.year}&term=${sel.term}${sel.learner ? `&learner_id=${sel.learner}` : ''}`);
   view().innerHTML = `
     <div class="report-bar no-print">
       <a href="#reports?class=${sel.class}&term=${sel.term}&year=${sel.year}">← Report forms</a><span style="flex:1"></span>
@@ -756,10 +844,10 @@ async function renderReportForms() {
       ${r.reports.length ? `<button class="secondary" id="zip">${r.reports.length === 1 ? 'Download PDF' : 'Download ZIP (one PDF per learner)'}</button>` : ''}
     </div>
     <div id="zm" class="no-print"></div>
-    ${r.reports.map(x => reportForm(x, r)).join('') || '<p class="muted">No results for this class and term yet.</p>'}`;
+    ${r.reports.map(x => reportForm(x, r)).join('') || '<p class="muted">No results for this class yet.</p>'}`;
   $('#print').onclick = () => {
     const before = document.title;
-    document.title = sel.learner && r.reports[0] ? `Report - ${r.reports[0].name} - Term ${sel.term} ${sel.year}` : `Reports - ${r.class.label} - Term ${sel.term} ${sel.year}`;
+    document.title = sel.learner && r.reports[0] ? `Report - ${r.reports[0].name} - ${periodLabel(sel.term, sel.year)}` : `Reports - ${r.class.label} - ${periodLabel(sel.term, sel.year)}`;
     window.print();
     document.title = before;
   };
@@ -1210,6 +1298,21 @@ async function renderSettings() {
           <td>${PAY_STATUS[p.status] || esc(p.status)}${p.note ? `<div class="muted">${esc(p.note)}</div>` : ''}</td></tr>`).join('')}</tbody></table></div>` : ''}
     </div>
     <div class="card">
+      <h2 style="margin-top:0">How term results are worked out</h2>
+      <form id="st">
+        <p><label class="check"><input type="radio" name="assessment_style" value="exams" ${s.assessment_style !== 'strands' ? 'checked' : ''}>
+          <span><b>By assessment type</b> (opener, mid-term, end-term…). Each type counts once in the term average, and the report form shows a
+          column for each type.</span></label></p>
+        <p><label class="check"><input type="radio" name="assessment_style" value="strands" ${s.assessment_style === 'strands' ? 'checked' : ''}>
+          <span><b>Strand by strand</b>, built up over the term. Every mark a learner gets for a strand (in any assessment) is averaged, each
+          strand gets a level on the report form, and the term average is the mean of the strands. Best when teachers assess strand by strand.</span></label></p>
+        <p><button class="secondary">Save</button></p>
+      </form>
+      <div id="stm"></div>
+      <p class="muted">You can switch at any time: report forms and class results are worked out again from the same marks.
+        The end-of-year average is always the mean of Term 1, 2 and 3.</p>
+    </div>
+    <div class="card">
       <h2 style="margin-top:0">Grading thresholds</h2>
       <p class="muted">Minimum percentage for each level. Leave blank to use the defaults shown.</p>
       <form id="gr">
@@ -1263,6 +1366,12 @@ async function renderSettings() {
       payPrompt($('#onepay'), [id], `Pay for ${l.name} only:`, { term: b.term, year: b.year });
     };
   }
+  const st = $('#st');
+  st.onsubmit = action($('button', st), $('#stm'), async () => {
+    await api('PATCH', '/api/school', { assessment_style: new FormData(st).get('assessment_style') });
+    await loadMe();
+    notice($('#stm'), null, 'Saved. Class results and report forms now use this.');
+  });
   const gr = $('#gr');
   gr.onsubmit = action($('button', gr), $('#grm'), async () => {
     const grading = { cbc4: {}, cbc8: {} };
@@ -1365,6 +1474,7 @@ async function renderHelp() {
       <li>The class teacher's and head teacher's comments are written for you from each learner's results. Read them, change anything, and press <b>Save comments</b>.</li>
       <li>Press <b>Print or download all report forms</b>. Print them, or download a ZIP file with one PDF per learner.</li>
       <li>When the reports are final, press <b>Close term</b>. This locks the term's results so printed reports never change. You can reopen it if needed.</li>
+      <li>At the end of the year, choose <b>Whole year</b> instead of a term: the class sheet and report forms show Term 1, 2 and 3 and the year average.</li>
     </ol>`)}
     ${step(5, 'Each new year', `<ol>
       <li>Open each class and press <b>Promote</b> to move all its learners to the next grade (e.g. Grade 7 East 2026 → Grade 8 East 2027).
@@ -1374,7 +1484,10 @@ async function renderHelp() {
     <div class="card"><h2 style="margin-top:0">How the numbers are worked out</h2><ul>
       <li><b>Levels:</b> Grades 7–9 use the 8-level CBC rubric (EE1 90%+, EE2 75%+, ME1 58%+, ME2 41%+, AE1 31%+, AE2 21%+, BE1 11%+, BE2 below);
         PP1–Grade 6 use 4 levels (EE 80%+, ME 50%+, AE 30%+, BE below). You can change the thresholds in Settings.</li>
-      <li><b>Term average:</b> each assessment type counts once (two monthly tests are averaged into one Monthly score), then the types are averaged.</li>
+      <li><b>Term average</b>, chosen in Settings:
+        <ul><li><b>By assessment type:</b> each type counts once (two monthly tests are averaged into one Monthly score), then the types are averaged.</li>
+        <li><b>Strand by strand:</b> all of a learner's marks for each strand during the term are averaged, then the strands are averaged.</li></ul></li>
+      <li><b>End-of-year average:</b> the mean of the Term 1, 2 and 3 averages. A term with no assessments is left out, not counted as zero.</li>
       <li><b>Absent</b> learners are left out of an average, never counted as zero.</li>
       <li><b>Overall average:</b> every learning area counts equally. Learners are not ranked, as CBC guidance advises.</li>
     </ul></div>

@@ -106,3 +106,60 @@ test('primary (4-level) term results and comments', () => {
   assert.equal(draftHeadComment(baraka, s4), 'Needs close support. Please work with the school to help the learner improve.');
   assert.deepEqual(t.areas.map(x => x.name), ['English', 'Mathematics', 'Science and Technology']);
 });
+
+test('strand by strand: every mark for a strand over the term is averaged, then the strands', () => {
+  // Two per-strand Maths assessments (Numbers twice, Algebra once) and one English total.
+  const a = [
+    { id: 's1', learning_area_id: 'M', learning_areas: maths, kind: 'weekly', per_strand: true, assessed_on: '2027-01-20' },
+    { id: 's2', learning_area_id: 'M', learning_areas: maths, kind: 'monthly', per_strand: true, assessed_on: '2027-02-20' },
+    { id: 's3', learning_area_id: 'E', learning_areas: eng, kind: 'end_term', per_strand: false, assessed_on: '2027-03-27' },
+  ];
+  const components = [
+    { id: 'c1', assessment_id: 's1', label: 'Numbers', strands: { name: 'Numbers', sort_order: 1 } },
+    { id: 'c2', assessment_id: 's2', label: 'Algebra', strands: { name: 'Algebra', sort_order: 2 } },
+    { id: 'c3', assessment_id: 's2', label: 'Whole numbers', strands: { name: 'Numbers', sort_order: 1 } }, // a sub-strand of Numbers
+    { id: 'c4', assessment_id: 's3', label: 'Total' },
+  ];
+  const st = (component_id, percent) => ({ component_id, percent });
+  const res = [
+    r('s1', 'a', 60, 'assessed', [st('c1', 60)]), r('s2', 'a', 70, 'assessed', [st('c2', 40), st('c3', 100)]), r('s3', 'a', 55, 'assessed', [st('c4', 55)]),
+    r('s1', 'b', null, 'absent'), r('s2', 'b', null, 'absent'), r('s3', 'b', null, 'absent'),
+  ];
+  const t = buildTerm({ learners, assessments: a, results: res, scale, style: 'strands', components });
+  assert.equal(t.style, 'strands');
+  assert.deepEqual(t.columns, []);
+  assert.deepEqual(t.areas.find(x => x.id === 'M').strands, ['Numbers', 'Algebra']);
+  const amani = t.learners[0];
+  // Numbers = mean(60, 100) = 80; Algebra = 40; Maths = mean(80, 40) = 60
+  assert.deepEqual(amani.areas.M.strands.map(x => [x.name, x.percent, x.level, x.marks]), [['Numbers', 80, 'EE2', 2], ['Algebra', 40, 'AE1', 1]]);
+  assert.equal(amani.areas.M.average, 60);
+  // English has no strand marks, so its total counts
+  assert.equal(amani.areas.E.average, 55);
+  assert.deepEqual(amani.weak_strands.map(x => x.label), ['Mathematics › Algebra']);
+  // Absent throughout: no average, not zero
+  assert.equal(t.learners[1].areas.M.average, null);
+  assert.equal(t.learners[1].overall_percent, null);
+});
+
+test('end of year: each term average, then the mean of the terms with results', () => {
+  const { buildYear } = require('../lib/term');
+  const term = (n, mPct, ePct) => ({ term: n, data: buildTerm({
+    learners,
+    assessments: [{ id: `m${n}`, learning_area_id: 'M', learning_areas: maths, kind: 'end_term', assessed_on: '2027-03-01' },
+      ...(ePct == null ? [] : [{ id: `e${n}`, learning_area_id: 'E', learning_areas: eng, kind: 'end_term', assessed_on: '2027-03-01' }])],
+    results: [r(`m${n}`, 'a', mPct), ...(ePct == null ? [] : [r(`e${n}`, 'a', ePct)])],
+    scale,
+  }) });
+  const y = buildYear([term(1, 60, 40), term(2, 70, null), term(3, 80, 50)], learners, scale);
+  assert.deepEqual(y.terms, [1, 2, 3]);
+  assert.equal(y.learners.length, 1); // Baraka has no results this year
+  const amani = y.learners[0];
+  assert.deepEqual(amani.areas.M.terms, { 1: 60, 2: 70, 3: 80 });
+  assert.equal(amani.areas.M.average, 70);
+  // English was not assessed in Term 2: the year average is of Terms 1 and 3 only
+  assert.deepEqual([amani.areas.E.terms, amani.areas.E.average], [{ 1: 40, 3: 50 }, 45]);
+  assert.equal(amani.overall_percent, 57.5);
+  assert.deepEqual(amani.terms_overall, { 1: 50, 2: 70, 3: 65 });
+  assert.match(draftClassComment(amani, scale, 'year'), /good year/);
+  assert.equal(y.class_mean_percent, 57.5);
+});

@@ -238,6 +238,50 @@ test('Phase 1 flow', async (t) => {
     assert.equal(ok(await admin('GET', `/api/reports/termly?class_id=${ids.cls}&year=${YEAR}&term=1`)).term_record.closed_at, null);
   });
 
+  await t.test('strand-by-strand schools: term results built from strand marks', async () => {
+    assert.equal((await admin('PATCH', '/api/school', { assessment_style: 'average' })).status, 400);
+    ok(await admin('PATCH', '/api/school', { assessment_style: 'strands' }));
+    const r = ok(await admin('GET', `/api/reports/termly?class_id=${ids.cls}&year=${YEAR}&term=1`));
+    assert.equal(r.style, 'strands');
+    assert.deepEqual(r.columns, []);
+    assert.deepEqual(r.areas.find(a => a.id === ids.math).strands, ['Numbers', 'Geometry']);
+    const by = name => r.reports.find(x => x.name === name).areas[ids.math];
+    // Amani: Numbers 18/20 = 90%, Geometry 9/10 = 90% → 90 (the end-term total is not needed: there are strand marks)
+    assert.deepEqual(by('Amani Otieno').strands.map(s => [s.name, s.percent, s.level]), [['Numbers', 90, 'EE1'], ['Geometry', 90, 'EE1']]);
+    assert.equal(by('Amani Otieno').average, 90);
+    assert.equal(by('Baraka Kamau').average, 25);   // Numbers 40, Geometry 10
+    assert.equal(by('Chebet Kiprop').average, 70);  // absent for the strand test: only the end-term total
+    ok(await admin('PATCH', '/api/school', { assessment_style: 'exams' }));
+  });
+
+  await t.test('end of year: Term 1, 2 and 3 averages and the year average', async () => {
+    // A Term 2 English test for Amani and Baraka
+    const e2 = ok(await admin('POST', '/api/assessments', { assignment_ids: [ids.asgEng], kind: 'end_term', term: 2, year: YEAR, assessed_on: `${YEAR}-07-30`, max_score: 100 })).created[0].assessment;
+    sheetValues = fill({ 'Amani Otieno': [75], 'Baraka Kamau': [60], 'Chebet Kiprop': 'absent' });
+    ok(await admin('POST', `/api/assessments/${e2.id}/analyse`, {}));
+    const y = ok(await admin('GET', `/api/classes/${ids.cls}/year?year=${YEAR}`));
+    assert.deepEqual(y.terms, [1, 2, 3]);
+    const amani = y.learners.find(l => l.name === 'Amani Otieno');
+    assert.deepEqual(amani.areas[ids.eng].terms, { 1: 55, 2: 75 });
+    assert.equal(amani.areas[ids.eng].average, 65);  // mean of the terms with results
+    assert.deepEqual(amani.areas[ids.math].terms, { 1: 85 });
+    assert.equal(amani.overall_percent, 75);
+    assert.equal(y.learners.find(l => l.name === 'Chebet Kiprop').areas[ids.eng].terms[2], undefined);
+
+    const rep = ok(await admin('GET', `/api/reports/annual?class_id=${ids.cls}&year=${YEAR}&learner_id=${amani.learner_id}`));
+    assert.equal(rep.reports.length, 1);
+    assert.match(rep.reports[0].class_comment, /^Amani has had an excellent year/);
+    ok(await admin('PUT', '/api/report-comments', { learner_id: amani.learner_id, year: YEAR, term: 0, class_comment: 'A strong year.' }));
+    assert.equal(ok(await admin('GET', `/api/reports/annual?class_id=${ids.cls}&year=${YEAR}`)).reports.find(x => x.learner_id === amani.learner_id).class_comment, 'A strong year.');
+    // Term 1 comments are separate from the year's
+    assert.equal(ok(await admin('GET', `/api/reports/termly?class_id=${ids.cls}&year=${YEAR}&term=1&learner_id=${amani.learner_id}`)).reports[0].class_comment, 'Edited by the class teacher.');
+    // Closing Term 3 locks the year's comments
+    ok(await admin('POST', '/api/terms/close', { year: YEAR, term: 3 }));
+    assert.equal((await admin('PUT', '/api/report-comments', { learner_id: amani.learner_id, year: YEAR, term: 0, class_comment: 'x' })).status, 400);
+    ok(await admin('POST', '/api/terms/reopen', { year: YEAR, term: 3 }));
+    assert.equal((await admin('GET', `/api/classes/${ids.cls}/year?year=abc`)).status, 400);
+  });
+
   await t.test('a new year: learners are unpaid until paid for; owner sees all schools', async () => {
     const next = ok(await admin('GET', `/api/billing?year=${YEAR + 1}&term=1`));
     assert.deepEqual([next.unpaid.length, next.quotes.year], [3, 15000]);

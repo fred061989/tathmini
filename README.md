@@ -25,7 +25,13 @@ Only school **admins** sign in, e.g. the head teacher and the ICT person. **Teac
    - The class and head teacher's comments are **drafted from the results**, and the admin edits them before printing.
    - **Closing the term** locks its results and comments so printed reports stay final. Until then reports are marked *provisional*.
 
-**Term averages:** within a term, each assessment type counts once (two monthly tests are averaged into one "Monthly" score), and the term average is the mean of the types. Absences are left out, not counted as zero. The overall average gives each learning area equal weight.
+**Term averages:** each school chooses one of two ways in Settings:
+- **By assessment type** (opener, mid-term, end-term…): each type counts once (two monthly tests are averaged into one "Monthly" score), and the term average is the mean of the types. The report form shows a column per type.
+- **Strand by strand:** every mark a learner gets for a strand during the term is averaged, each strand gets a level on the report form, and the term average is the mean of the strands. Assessments scored only as a total count when a learning area has no strand marks.
+
+**End-of-year average:** the mean of the Term 1, 2 and 3 averages (a term without results is left out). Choose **Whole year** on Class results or Report forms for the year sheet and end-of-year report forms.
+
+Absences are left out, not counted as zero. The overall average gives each learning area equal weight. Each school also chooses a **school colour**, used on report forms and app buttons.
 
 ## Grading
 
@@ -41,11 +47,12 @@ Each school can change the thresholds under Settings.
 
 ## Pricing (Phase 1)
 
-- Each learner is paid for from the school's prepaid balance: **KES 20 per term** (`LEARNER_TERM_FEE_KES`) or **KES 50 for the whole year** (`LEARNER_FEE_KES`).
+- Each learner costs **KES 20 per term** (`LEARNER_TERM_FEE_KES`) or **KES 50 for the whole year** (`LEARNER_FEE_KES`). There is no prepaid balance.
 - Adding learners costs nothing. Right after adding, the admin is asked to pay for the new learners by the term or the year, or later. Billing can also pay for all unpaid learners at once, showing both prices first.
 - Paying for the year after some terms are already paid charges only the remaining terms, never more than KES 50 a year in total.
 - Learners not paid for a term are left out of that term's sheets and report forms.
-- Schools pay the platform owner directly (e.g. by M-Pesa). The owner records the payment on **All schools**, and it appears in the school's account activity.
+- The admin pays for one learner or all unpaid learners by M-Pesa (Paybill `MPESA_PAYBILL`, account number = the school's code, e.g. `TM31B847`), then types the M-Pesa code. The learners are unlocked at once.
+- The owner checks each code against the M-Pesa statement on **All schools**: **Confirm**, or **Reject**, which locks those learners again. Each code can be used only once. (Phase 2: automatic M-Pesa STK push.)
 
 ## Platform owner
 
@@ -54,7 +61,7 @@ Set `PLATFORM_OWNER_EMAILS` to your sign-in email. You then get:
   - **Load starter curriculum** adds the CBC learning areas for PP1 to Grade 9, plus some Junior School strands. **Check these against the KICD curriculum designs.**
   - **Import** pasted spreadsheet rows (`grade, learning_area, code, strand, sub_strand`). **Check** validates without saving.
   - **Download as CSV**.
-- **All schools:** balances, learners paid for this year, and recording payments.
+- **All schools:** payments to check (confirm or reject), learners paid for this term, and money received per school.
 
 ## Setup
 
@@ -77,7 +84,7 @@ Set `PLATFORM_OWNER_EMAILS` to your sign-in email. You then get:
 
 - `lib/cbc.js`: grading.
 - `lib/analysis.js`: one assessment.
-- `lib/term.js`: term averages, report forms, comment drafts.
+- `lib/term.js`: term averages (by type or strand by strand), end-of-year averages, comment drafts.
 - `lib/sheets.js`: Google Sheets.
 - `lib/billing.js`: learner fees.
 - `lib/routes/*`: the API.
