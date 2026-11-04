@@ -111,6 +111,8 @@ CREATE TABLE IF NOT EXISTS assessments (
   year INTEGER NOT NULL,
   week INTEGER,
   assessed_on DATE NOT NULL DEFAULT CURRENT_DATE,
+  due_on DATE,                           -- teachers enter scores by this date (e.g. the end of term for strand-by-strand marks)
+  sheet_learners JSONB NOT NULL DEFAULT '[]',  -- learner ids on the teacher's sheet (paid-for learners only)
   status TEXT NOT NULL DEFAULT 'draft' CHECK (status IN ('draft', 'sheet_ready', 'analysed')),
   sheet_id TEXT,
   sheet_url TEXT,

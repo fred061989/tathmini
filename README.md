@@ -27,7 +27,11 @@ Only school **admins** sign in, e.g. the head teacher and the ICT person. **Teac
 
 **Term averages:** each school chooses one of two ways in Settings:
 - **By assessment type** (opener, mid-term, end-term…): each type counts once (two monthly tests are averaged into one "Monthly" score), and the term average is the mean of the types. The report form shows a column per type.
-- **Strand by strand:** every mark a learner gets for a strand during the term is averaged, each strand gets a level on the report form, and the term average is the mean of the strands. Assessments scored only as a total count when a learning area has no strand marks.
+- **Strand by strand:** the admin lists the term's strands (e.g. strands 1–4) in one sheet with a date to enter scores by; the teacher fills in each strand as it is assessed. Every strand mark of the term is added up (marks scored ÷ marks possible, e.g. 14/20 + 30/50 = 44/70 = 63%), each strand gets a level on the report form, and the term percentage adds up all strand marks. Assessments scored only as a total count when a learning area has no strand marks.
+
+**Out of:** row 2 of each teacher's sheet says what each column is marked out of. The admin sets it; the teacher can change it (e.g. a test given out of 50). Percentages always use it, and marks above it are refused.
+
+**Only paid-for learners** are put on teachers' sheets. A learner paid for later can be added to the bottom of an existing sheet from the assessment page.
 
 **End-of-year average:** the mean of the Term 1, 2 and 3 averages (a term without results is left out). Choose **Whole year** on Class results or Report forms for the year sheet and end-of-year report forms.
 

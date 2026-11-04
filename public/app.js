@@ -232,7 +232,7 @@ async function renderDashboard() {
         <tr>
           <td><a href="#assessment/${a.id}">${esc(a.title)}</a><div class="muted">${esc(a.learning_areas?.name)} · ${esc(classLabel(a.classes))}</div></td>
           <td>${esc(a.staff?.full_name || '')}</td>
-          <td>${esc(a.assessed_on)}</td>
+          <td>${esc(a.assessed_on)}${a.due_on ? `<div class="muted">${dueText(a)}</div>` : ''}</td>
           <td>${status(a.status)}</td>
           <td>${a.sheet_url ? `<a href="${esc(a.sheet_url)}" target="_blank" rel="noopener">Open</a>` : ''}
             ${a.status === 'sheet_ready' ? `<div><a href="#" data-progress="${a.id}">Check progress</a></div>` : ''}</td>
@@ -277,7 +277,9 @@ async function renderNewAssessment() {
         <label>Week (optional) <input name="week" type="number" min="1" max="14" style="width:90px"></label>
         <label>Year <input name="year" type="number" value="${thisYear}" style="width:90px"></label>
         <label>Date <input name="assessed_on" type="date" value="${new Date().toISOString().slice(0, 10)}"></label>
+        <label>Teachers enter scores by (optional) <input name="due_on" type="date"></label>
       </div>
+      ${byStrand ? '<p class="muted">For strand-by-strand marks over the term: create one sheet listing the strands to assess (e.g. strands 1–4), set the date to enter scores by (e.g. the end of term), and the teacher fills in each strand as it is assessed. Press Analyse at the end: marks are added up into percentages.</p>' : ''}
       <p><label>Title (optional, one learning area only) <input name="title" placeholder="Created automatically if left blank"></label></p>
       <p><label>Score by <select name="mode">
         <option value="total" ${byStrand ? '' : 'selected'}>Total marks</option>
@@ -287,7 +289,8 @@ async function renderNewAssessment() {
       ${byStrand ? '<p class="muted">Your school works out term results strand by strand (Settings), so score each strand. Marks scored as a total only count for a learning area with no strand marks.</p>' : ''}
       <div id="total"><label>Out of (maximum marks) <input name="max_score" type="number" min="1" value="100" style="width:120px"></label></div>
       <div id="strands" hidden>
-        <p class="muted">From the national curriculum for this grade. Remove what is not being assessed and set the maximum marks for each:</p>
+        <p class="muted">From the national curriculum for this grade. Remove what is not being assessed and set what each is out of
+          (the teacher can change it in row 2 of the sheet, e.g. if a test was out of 50):</p>
         <div id="rows"></div>
         <button type="button" class="secondary" id="add-strand">Add strand</button>
       </div>
@@ -340,7 +343,7 @@ async function renderNewAssessment() {
     if (detailed() && !components.length) throw new Error('Add at least one strand');
     const out = await api('POST', '/api/assessments', {
       assignment_ids: sel.map(x => x.id), kind: fd.kind, term: fd.term, week: fd.week || null, year: fd.year,
-      assessed_on: fd.assessed_on, title: fd.title, per_strand: detailed(), components, max_score: Number(fd.max_score),
+      assessed_on: fd.assessed_on, due_on: fd.due_on || null, title: fd.title, per_strand: detailed(), components, max_score: Number(fd.max_score),
     });
     const notes = out.created.filter(c => c.note).map(c => `${c.assessment.title}: ${c.note}`);
     if (out.created.length === 1 && !notes.length) { location.hash = `#assessment/${out.created[0].assessment.id}`; return; }
@@ -359,12 +362,12 @@ function strandRow(label, strandId, subId) {
 // ---------- One assessment ----------
 
 async function renderAssessment(id) {
-  const { assessment: a, components, results, learners, scores, term_closed: closed } = await api('GET', `/api/assessments/${id}`);
+  const { assessment: a, components, results, learners, scores, term_closed: closed, unpaid, not_on_sheet: notOnSheet } = await api('GET', `/api/assessments/${id}`);
   const s = a.summary;
   view().innerHTML = `
     <p><a href="#dashboard">← Assessments</a></p>
     <h1>${esc(a.title)}</h1>
-    <p class="muted">${esc(a.learning_areas?.name)} · ${esc(classLabel(a.classes))} · ${esc(KINDS[a.kind])} · Term ${a.term} · ${esc(a.assessed_on)} · ${esc(a.staff?.full_name || '')} · ${status(a.status)}</p>
+    <p class="muted">${esc(a.learning_areas?.name)} · ${esc(classLabel(a.classes))} · ${esc(KINDS[a.kind])} · Term ${a.term} · ${esc(a.assessed_on)} · ${esc(a.staff?.full_name || '')} · ${status(a.status)}${a.due_on ? ` · ${dueText(a)}` : ''}</p>
     <div class="row">
       ${a.sheet_url ? `<a class="btn secondary" href="${esc(a.sheet_url)}" target="_blank" rel="noopener">Open Google Sheet</a>` : ''}
       ${!a.sheet_id ? '<button id="gen">Create and send sheet</button>' : ''}
@@ -375,6 +378,10 @@ async function renderAssessment(id) {
       ${s ? `<a class="btn secondary" href="#results?class=${a.class_id}&term=${a.term}&year=${a.year}">Class results for the term</a>` : ''}
     </div>
     ${closed ? `<p class="notice">Term ${a.term} ${a.year} is closed, so these results are locked.</p>` : ''}
+    ${notOnSheet.length && !closed ? `<div class="notice" style="margin-top:12px">${notOnSheet.length} learner(s) were paid for after the sheet was sent:
+      ${esc(notOnSheet.map(l => l.name).join(', '))}. <button class="secondary" id="addrows">Add them to the teacher's sheet</button></div>` : ''}
+    ${unpaid.length ? `<div class="notice error" style="margin-top:12px">${unpaid.length} learner(s) in this class are not paid for Term ${a.term} ${a.year}, so they are
+      not on the teacher's sheet: ${esc(unpaid.map(l => l.name).join(', '))}. <a href="#settings?term=${a.term}&year=${a.year}">Pay for them</a>, then add them to the sheet here.</div>` : ''}
     <div id="m" style="margin-top:12px"></div>
     <div id="grid"></div>
     <p class="muted">Scored on: ${components.map(c => `${esc(c.label)} (/${Number(c.max_score)})`).join(', ')}</p>
@@ -389,6 +396,13 @@ async function renderAssessment(id) {
     });
   }
   if ($('#type')) $('#type').onclick = () => scoreGrid($('#grid'), a, components, learners, scores);
+  if ($('#addrows')) {
+    $('#addrows').onclick = action($('#addrows'), m, async () => {
+      const out = await api('POST', `/api/assessments/${id}/sheet/learners`, {});
+      await route();
+      notice($('#m'), null, `Added to the sheet: ${out.learners?.join(', ') || 'nobody new'}.`);
+    });
+  }
   if ($('#delete')) {
     $('#delete').onclick = action($('#delete'), m, async () => {
       if (!confirm(`Delete "${a.title}"? Its scores and results are deleted too. The Google Sheet stays in the school's Google Drive.`)) return;
@@ -405,6 +419,13 @@ async function renderAssessment(id) {
   }
 }
 
+// "Enter by 27 Mar" (red once it has passed and the sheet is still with the teacher).
+function dueText(a) {
+  const d = new Date(a.due_on + 'T00:00:00');
+  const late = a.status === 'sheet_ready' && d < new Date(new Date().toDateString());
+  return `<span style="color:${late ? 'var(--danger)' : 'inherit'}">${late ? 'Was due' : 'Enter by'} ${esc(d.toLocaleDateString('en-KE', { day: 'numeric', month: 'short' }))}</span>`;
+}
+
 // Typing scores in the app: a backup when a teacher cannot use the Google Sheet.
 function scoreGrid(box, a, components, learners, saved) {
   const key = (l, c) => `${l}:${c}`;
@@ -416,11 +437,13 @@ function scoreGrid(box, a, components, learners, saved) {
       <p class="muted">Type each learner's marks, tick Absent for learners who missed the assessment, and add a short comment if you like
         (it appears on the report form). ${a.sheet_id ? 'Saving here replaces what was read from the Google Sheet; analysing from the sheet again later would replace these.' : ''}</p>
       <form id="sg"><div class="table-wrap"><table>
-        <thead><tr><th>Learner</th>${components.map(c => `<th class="num">${esc(c.label)} (/${Number(c.max_score)})</th>`).join('')}<th>Absent</th><th>Comment</th></tr></thead>
-        <tbody>${learners.map(l => {
+        <thead><tr><th>Learner</th>${components.map(c => `<th class="num">${esc(c.label)}</th>`).join('')}<th>Absent</th><th>Comment</th></tr></thead>
+        <tbody><tr class="out-of"><td><strong>Out of</strong> <span class="muted">(change if marked out of something else)</span></td>
+          ${components.map(c => `<td class="num"><input type="number" min="1" max="1000" step="any" required data-max="${c.id}" value="${Number(c.max_score)}" style="width:80px"></td>`).join('')}<td></td><td></td></tr>
+        ${learners.map(l => {
           const firstSaved = savedOf.get(key(l.id, first.id));
           return `<tr data-l="${l.id}"><td>${esc(l.first_name)} ${esc(l.last_name)} <span class="muted">${esc(l.adm_no || '')}</span></td>
-            ${components.map(c => `<td class="num"><input type="number" min="0" max="${Number(c.max_score)}" step="any" data-c="${c.id}"
+            ${components.map(c => `<td class="num"><input type="number" min="0" step="any" data-c="${c.id}"
               value="${esc(savedOf.get(key(l.id, c.id))?.raw_score ?? '')}" style="width:80px"></td>`).join('')}
             <td><input type="checkbox" data-absent ${firstSaved?.absent ? 'checked' : ''}></td>
             <td><input data-comment value="${esc(firstSaved?.comment || '')}" maxlength="300" style="min-width:220px"></td></tr>`;
@@ -440,7 +463,8 @@ function scoreGrid(box, a, components, learners, saved) {
         learner_id: row.dataset.l, component_id: input.dataset.c, raw_score: absent ? null : input.value, absent, comment: i === 0 ? comment : null,
       }));
     }
-    await api('POST', `/api/assessments/${a.id}/analyse`, { scores: out });
+    const max_scores = $$('[data-max]', f).map(i => ({ component_id: i.dataset.max, max_score: Number(i.value) }));
+    await api('POST', `/api/assessments/${a.id}/analyse`, { scores: out, max_scores });
     route();
   });
 }
@@ -493,7 +517,7 @@ async function renderResults() {
     <h1 class="no-print">Class results</h1>
     <p class="muted no-print">The class teacher's sheet: every learner's term average per learning area, with class means.
       ${S.school.assessment_style === 'strands'
-    ? 'Your school works out term averages strand by strand: each strand\'s marks over the term are averaged, then the strands.'
+    ? 'Your school works out term results strand by strand: each learner\'s strand marks over the term are added up into a percentage.'
     : 'Each assessment type (monthly, end-term…) counts once in a term average.'} Absences are left out, not counted as zero.
       Choose <b>Whole year</b> for Term 1, 2 and 3 and the year average.</p>
     <form id="pf" class="card inline no-print">${periodPicker(classes, sel)}<button>Show</button></form>
@@ -731,7 +755,7 @@ function perfTable(x, r) {
         return `<tr><td>${esc(a.name)}</td><td class="strands">${sts.map(st => `<span>${esc(st.name)} ${rfPill(st.level)}</span>`).join('')
           || (v.cells?.absent ? '<span class="abs">ABS</span>' : v.average != null ? '<span class="note">Total marks (not by strand)</span>' : '')}</td>${avg(v)}${rfComment(v)}</tr>`; }).join('')}
         ${overall('<td></td>')}</tbody></table>
-      <div class="note">Each strand's level comes from all of the learner's marks for that strand this term; the term average is the mean of the strands.
+      <div class="note">Each strand's level comes from all of the learner's marks for that strand this term, added up (marks scored ÷ marks possible); the term percentage adds up all strand marks.
         ABS = absent. The overall average gives each learning area equal weight. CBC learners are not ranked.</div>`;
   }
   return `<table class="perf"><colgroup><col style="width:34mm">${r.columns.map(() => '<col style="width:11.5mm">').join('')}${tail}</colgroup>
@@ -1304,8 +1328,8 @@ async function renderSettings() {
           <span><b>By assessment type</b> (opener, mid-term, end-term…). Each type counts once in the term average, and the report form shows a
           column for each type.</span></label></p>
         <p><label class="check"><input type="radio" name="assessment_style" value="strands" ${s.assessment_style === 'strands' ? 'checked' : ''}>
-          <span><b>Strand by strand</b>, built up over the term. Every mark a learner gets for a strand (in any assessment) is averaged, each
-          strand gets a level on the report form, and the term average is the mean of the strands. Best when teachers assess strand by strand.</span></label></p>
+          <span><b>Strand by strand</b>, built up over the term. Every mark a learner gets for a strand (in any assessment) is added up into a percentage
+          (marks scored ÷ marks possible), each strand gets a level on the report form, and the term percentage adds up all the strand marks. Best when teachers assess strand by strand.</span></label></p>
         <p><button class="secondary">Save</button></p>
       </form>
       <div id="stm"></div>
@@ -1458,6 +1482,13 @@ async function renderHelp() {
     ${step(2, 'Give an assessment', `<ol>
       <li><a href="#new">New assessment</a>: choose the class, tick the learning areas, the type (opener, weekly, monthly, mid-term, end-term) and the term.</li>
       <li>Score it as a total (e.g. out of 50), or strand by strand, or sub-strand by sub-strand. Strands come from the CBC curriculum.</li>
+      <li><b>Out of:</b> row 2 of the teacher's sheet says what each column is marked out of. If the teacher gave the test out of 50 instead of 20,
+        they change it there. Tathmini turns every mark into a percentage using it, so 40 out of 50 is 80%.</li>
+      <li><b>Strands over the term:</b> list the strands for the term (e.g. strands 1–4) in one assessment and set <b>Teachers enter scores by</b>
+        (e.g. the end of term). The teacher fills in each strand as it is taught and assessed. At the end, press Analyse: the marks are added up
+        (marks scored ÷ marks possible) into a percentage and a CBC level.</li>
+      <li><b>Only paid-for learners</b> are on teachers' sheets. If you pay for a learner later, open the assessment and press
+        <b>Add them to the teacher's sheet</b>: they are added at the bottom of the same sheet.</li>
       <li>Each teacher receives an email from Google with their sheet. They type marks, put <b>Y</b> under Absent for absent learners, and may add a short
         comment for each learner, which appears on the report form. Names are locked, and marks above the maximum are refused.</li>
       <li>A teacher who cannot use Google Sheets can give you the marks on paper: open the assessment and press <b>Enter scores here</b>.</li>
@@ -1486,7 +1517,8 @@ async function renderHelp() {
         PP1–Grade 6 use 4 levels (EE 80%+, ME 50%+, AE 30%+, BE below). You can change the thresholds in Settings.</li>
       <li><b>Term average</b>, chosen in Settings:
         <ul><li><b>By assessment type:</b> each type counts once (two monthly tests are averaged into one Monthly score), then the types are averaged.</li>
-        <li><b>Strand by strand:</b> all of a learner's marks for each strand during the term are averaged, then the strands are averaged.</li></ul></li>
+        <li><b>Strand by strand:</b> all of a learner's marks for each strand during the term are added up (e.g. 14/20 + 30/50 = 44/70 = 63%),
+          and the term percentage adds up all the strand marks the same way.</li></ul></li>
       <li><b>End-of-year average:</b> the mean of the Term 1, 2 and 3 averages. A term with no assessments is left out, not counted as zero.</li>
       <li><b>Absent</b> learners are left out of an average, never counted as zero.</li>
       <li><b>Overall average:</b> every learning area counts equally. Learners are not ranked, as CBC guidance advises.</li>

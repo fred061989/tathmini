@@ -151,3 +151,5 @@ input[type=color] { width: 40px; height: 30px; padding: 0 2px; border: 1px solid
   .sheet-print h2 { font-size: 15px; margin: 0 0 4px; }
   .sheet-print th, .sheet-print td { border: 1px solid #c9d1cc !important; }
 }
+
+tr.out-of td { background: var(--accent-weak); }

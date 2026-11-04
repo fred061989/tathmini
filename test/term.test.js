@@ -107,7 +107,7 @@ test('primary (4-level) term results and comments', () => {
   assert.deepEqual(t.areas.map(x => x.name), ['English', 'Mathematics', 'Science and Technology']);
 });
 
-test('strand by strand: every mark for a strand over the term is averaged, then the strands', () => {
+test('strand by strand: marks for each strand are added up over the term, then all strands', () => {
   // Two per-strand Maths assessments (Numbers twice, Algebra once) and one English total.
   const a = [
     { id: 's1', learning_area_id: 'M', learning_areas: maths, kind: 'weekly', per_strand: true, assessed_on: '2027-01-20' },
@@ -120,9 +120,10 @@ test('strand by strand: every mark for a strand over the term is averaged, then 
     { id: 'c3', assessment_id: 's2', label: 'Whole numbers', strands: { name: 'Numbers', sort_order: 1 } }, // a sub-strand of Numbers
     { id: 'c4', assessment_id: 's3', label: 'Total' },
   ];
-  const st = (component_id, percent) => ({ component_id, percent });
+  const st = (component_id, raw, max_score) => ({ component_id, raw, max_score, percent: (raw / max_score) * 100 });
+  // Numbers: 12/20 in week 3, then 50/50 in the monthly test; Algebra 4/10; English 55/100
   const res = [
-    r('s1', 'a', 60, 'assessed', [st('c1', 60)]), r('s2', 'a', 70, 'assessed', [st('c2', 40), st('c3', 100)]), r('s3', 'a', 55, 'assessed', [st('c4', 55)]),
+    r('s1', 'a', 60, 'assessed', [st('c1', 12, 20)]), r('s2', 'a', 90, 'assessed', [st('c2', 4, 10), st('c3', 50, 50)]), r('s3', 'a', 55, 'assessed', [st('c4', 55, 100)]),
     r('s1', 'b', null, 'absent'), r('s2', 'b', null, 'absent'), r('s3', 'b', null, 'absent'),
   ];
   const t = buildTerm({ learners, assessments: a, results: res, scale, style: 'strands', components });
@@ -130,9 +131,9 @@ test('strand by strand: every mark for a strand over the term is averaged, then 
   assert.deepEqual(t.columns, []);
   assert.deepEqual(t.areas.find(x => x.id === 'M').strands, ['Numbers', 'Algebra']);
   const amani = t.learners[0];
-  // Numbers = mean(60, 100) = 80; Algebra = 40; Maths = mean(80, 40) = 60
-  assert.deepEqual(amani.areas.M.strands.map(x => [x.name, x.percent, x.level, x.marks]), [['Numbers', 80, 'EE2', 2], ['Algebra', 40, 'AE1', 1]]);
-  assert.equal(amani.areas.M.average, 60);
+  // Numbers = (12 + 50) / (20 + 50) = 62/70 = 88.6%; Algebra = 4/10 = 40%; Maths = 66/80 = 82.5%
+  assert.deepEqual(amani.areas.M.strands.map(x => [x.name, x.percent, x.level, x.scored, x.out_of]), [['Numbers', 88.6, 'EE2', 62, 70], ['Algebra', 40, 'AE1', 4, 10]]);
+  assert.equal(amani.areas.M.average, 82.5);
   // English has no strand marks, so its total counts
   assert.equal(amani.areas.E.average, 55);
   assert.deepEqual(amani.weak_strands.map(x => x.label), ['Mathematics › Algebra']);

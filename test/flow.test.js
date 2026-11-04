@@ -23,6 +23,8 @@ sheets.createAssessmentSheet = async (token, args) => {
   return { spreadsheetId: `sheet-${created.length}`, url: `https://docs.google.com/spreadsheets/d/sheet-${created.length}/edit` };
 };
 sheets.readAssessmentSheet = async () => sheetValues;
+const appended = [];
+sheets.addLearnersToSheet = async (token, id, args) => { appended.push({ id, ...args }); return { added: args.learners.length }; };
 
 fake.users.set('admin', { id: 'u-admin', email: 'head@kilimani.sc.ke' });
 fake.users.set('ict', { id: 'u-ict', email: 'ict@kilimani.sc.ke' });
@@ -39,7 +41,7 @@ const NOW_TERM = (m => (m <= 3 ? 1 : m <= 7 ? 2 : 3))(new Date().getMonth());
 // Fills the most recently created sheet: { 'Learner Name': [scores...] | 'absent' } plus optional comments.
 function fill(scoresByName, comments = {}) {
   const layout = sheets.buildSheetLayout(created[created.length - 1]);
-  return [layout.header, ...layout.rows.map(r => {
+  return [...layout.top, ...layout.rows.map(r => {
     const s = scoresByName[r[2]];
     if (s === 'absent') return [...r.slice(0, layout.scoreEnd), 'Y', ''];
     if (!s) return r;
@@ -191,7 +193,7 @@ test('Phase 1 flow', async (t) => {
     const layoutFor = id => created.find((c, i) => `sheet-${i + 1}` === fake.store.assessments.find(a => a.id === id).sheet_id);
     for (const [a, marks] of [[mathEnd, { 'Amani Otieno': 80, 'Baraka Kamau': 50, 'Chebet Kiprop': 70 }], [engEnd, { 'Amani Otieno': 50, 'Baraka Kamau': 90, 'Chebet Kiprop': 85 }]]) {
       const layout = sheets.buildSheetLayout(layoutFor(a.id));
-      sheetValues = [layout.header, ...layout.rows.map(r => [...r.slice(0, 3), marks[r[2]], '', ''])];
+      sheetValues = [...layout.top, ...layout.rows.map(r => [...r.slice(0, 3), marks[r[2]], "", ""])];
       ok(await admin('POST', `/api/assessments/${a.id}/analyse`, {}));
     }
   });
@@ -246,10 +248,10 @@ test('Phase 1 flow', async (t) => {
     assert.deepEqual(r.columns, []);
     assert.deepEqual(r.areas.find(a => a.id === ids.math).strands, ['Numbers', 'Geometry']);
     const by = name => r.reports.find(x => x.name === name).areas[ids.math];
-    // Amani: Numbers 18/20 = 90%, Geometry 9/10 = 90% → 90 (the end-term total is not needed: there are strand marks)
+    // Amani: Numbers 18/20 = 90%, Geometry 9/10 = 90% → 27/30 = 90 (the end-term total is not needed: there are strand marks)
     assert.deepEqual(by('Amani Otieno').strands.map(s => [s.name, s.percent, s.level]), [['Numbers', 90, 'EE1'], ['Geometry', 90, 'EE1']]);
     assert.equal(by('Amani Otieno').average, 90);
-    assert.equal(by('Baraka Kamau').average, 25);   // Numbers 40, Geometry 10
+    assert.equal(by('Baraka Kamau').average, 30);   // (8 + 1) / (20 + 10)
     assert.equal(by('Chebet Kiprop').average, 70);  // absent for the strand test: only the end-term total
     ok(await admin('PATCH', '/api/school', { assessment_style: 'exams' }));
   });
@@ -425,6 +427,52 @@ test('school colour: a dark enough colour is saved and reaches the report form',
     assert.equal((await admin('PATCH', '/api/school', { colour: bad })).status, 400, bad);
   }
   ok(await admin('PATCH', '/api/school', { colour: '#1f7a4d' }));
+});
+
+test('only paid learners get a sheet row; learners paid later are added; the teacher sets what it is out of', async () => {
+  const year = new Date().getFullYear();
+  const cls = ok(await admin('POST', '/api/classes', { grade: 7, stream: 'West', year }));
+  const added = ok(await admin('POST', '/api/learners', { class_id: cls.id, learners: [
+    { adm_no: '701', first_name: 'Pendo', last_name: 'Mumbi' }, { adm_no: '702', first_name: 'Rehema', last_name: 'Juma' }] }));
+  const [pendo, rehema] = added.added_ids;
+  ok(await admin('POST', '/api/billing/pay', { learner_ids: [pendo], year, term: 1, plan: 'term', mpesa_code: 'WST0000001' }));
+  const area = ok(await admin('GET', '/api/curriculum?grade=7')).find(a => a.name === 'Mathematics');
+  const janet = fake.store.staff.find(s => s.full_name === 'Janet Wanjiku');
+  const asg = ok(await admin('POST', '/api/assignments', { teacher_id: janet.id, class_id: cls.id, learning_area_id: area.id }));
+  const strands = area.strands.slice(0, 2);
+  const a = ok(await admin('POST', '/api/assessments', { assignment_ids: [asg.id], kind: 'custom', term: 1, year, per_strand: true, due_on: `${year}-03-27`,
+    components: strands.map(s => ({ label: s.name, strand_id: s.id, max_score: 20 })) })).created[0].assessment;
+  assert.equal(a.due_on, `${year}-03-27`);
+  assert.equal((await admin('POST', '/api/assessments', { assignment_ids: [asg.id], kind: 'custom', term: 1, year, max_score: 10, due_on: 'soon' })).status, 400);
+  // Rehema is not paid for: she is not on the teacher's sheet
+  assert.deepEqual(created[created.length - 1].learners.map(l => l.first_name), ['Pendo']);
+  let detail = ok(await admin('GET', `/api/assessments/${a.id}`));
+  assert.deepEqual([detail.unpaid.map(l => l.name), detail.not_on_sheet], [['Rehema Juma'], []]);
+  // Once paid for, she can be added to the bottom of the same sheet
+  ok(await admin('POST', '/api/billing/pay', { learner_ids: [rehema], year, term: 1, plan: 'term', mpesa_code: 'WST0000002' }));
+  detail = ok(await admin('GET', `/api/assessments/${a.id}`));
+  assert.deepEqual([detail.unpaid, detail.not_on_sheet.map(l => l.name)], [[], ['Rehema Juma']]);
+  assert.deepEqual(ok(await admin('POST', `/api/assessments/${a.id}/sheet/learners`, {})).learners, ['Rehema Juma']);
+  assert.deepEqual(appended[appended.length - 1].learners.map(l => l.first_name), ['Rehema']);
+  assert.deepEqual(ok(await admin('GET', `/api/assessments/${a.id}`)).not_on_sheet, []);
+  assert.equal(ok(await admin('POST', `/api/assessments/${a.id}/sheet/learners`, {})).added, 0);
+
+  // The teacher marked the first strand out of 50 instead of 20 (row 2 of the sheet)
+  const layout = sheets.buildSheetLayout({ components: detail.components, learners: [] });
+  sheetValues = [layout.header, ['', '', 'OUT OF →', 50, 20, '', ''], [pendo, '701', 'Pendo Mumbi', 40, 10, '', ''], [rehema, '702', 'Rehema Juma', 25, '', '', '']];
+  const out = ok(await admin('POST', `/api/assessments/${a.id}/analyse`, {}));
+  const byId = Object.fromEntries(out.results.map(r => [r.learner_id, r]));
+  assert.equal(byId[pendo].percent, 71.4);           // (40 + 10) / (50 + 20)
+  assert.equal(byId[pendo].strands[0].percent, 80);  // 40 / 50
+  assert.equal(byId[rehema].percent, 50);            // only the strand entered so far: 25 / 50
+  assert.equal(fake.store.assessment_components.find(c => c.id === detail.components[0].id).max_score, 50);
+  // A score above the new "out of" is caught; so is a bad "out of"
+  sheetValues = [layout.header, ['', '', 'OUT OF →', 50, 20, '', ''], [pendo, '701', 'Pendo Mumbi', 60, 10, '', '']];
+  assert.equal((await admin('POST', `/api/assessments/${a.id}/analyse`, {})).status, 422);
+  sheetValues = [layout.header, ['', '', 'OUT OF →', -5, 20, '', ''], [pendo, '701', 'Pendo Mumbi', 4, 10, '', '']];
+  const bad = await admin('POST', `/api/assessments/${a.id}/analyse`, {});
+  assert.equal(bad.status, 422);
+  assert.match(bad.body.details[0], /Out of/);
 });
 
 test('getting started checklist reflects what the school has done', async () => {

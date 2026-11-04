@@ -14,7 +14,7 @@ const DEFAULTS = {
   payments: { status: 'pending' },
   staff: { active: true, user_id: null },
   learners: { active: true },
-  assessments: { status: 'draft', per_strand: false },
+  assessments: { status: 'draft', per_strand: false, due_on: null, sheet_learners: [] },
 };
 const UNIQUE = { payments: ['mpesa_code'], learner_terms: ['learner_id', 'year', 'term'], learners: ['school_id', 'adm_no'], teacher_assignments: ['class_id', 'learning_area_id'], terms: ['school_id', 'year', 'term'] };
 
