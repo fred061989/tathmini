@@ -218,11 +218,11 @@ test('Phase 1 flow', async (t) => {
     assert.equal(r.reports.length, 3);
     assert.equal(r.school.motto, 'Excellence through effort');
     const amani = r.reports.find(x => x.name === 'Amani Otieno');
-    assert.equal(amani.areas[ids.math].remark, 'Very good. Exceeding expectations.'); // 85% = EE2
+    assert.equal(amani.areas[ids.math].remark, 'Very good work. Keep it up!'); // 85% = EE2
     assert.equal(amani.areas[ids.math].teacher_initials, 'J.W.');
     assert.match(amani.class_comment, /^Amani has had a good term/);
     assert.equal(amani.comments_saved, false);
-    assert.equal(r.reports.find(x => x.name === 'Baraka Kamau').areas[ids.math].remark, 'Needs improvement. Approaching expectations.');
+    assert.equal(r.reports.find(x => x.name === 'Baraka Kamau').areas[ids.math].remark, 'Making progress. Keep practising.');
 
     ok(await admin('PUT', '/api/report-comments', { learner_id: amani.learner_id, year: YEAR, term: 1, class_comment: 'Edited by the class teacher.', head_comment: 'Well done.', co_curricular: 'Athletics (county)' }));
     ok(await admin('PUT', '/api/terms', { year: YEAR, term: 1, closing_date: `${YEAR}-04-02`, next_term_date: `${YEAR}-04-26` }));
@@ -390,7 +390,7 @@ test('scores typed in the app (no Google Sheet) are analysed and reach the repor
   const again = ok(await admin('GET', `/api/assessments/${a.id}`));
   assert.equal(again.scores.find(x => x.learner_id === neema).raw_score, '30');
   const report = ok(await admin('GET', `/api/reports/termly?class_id=${cls.id}&year=${cls.year}&term=2&learner_id=${neema}`)).reports[0];
-  assert.equal(report.areas[eng.id].remark, 'Very good. Exceeding expectations.');
+  assert.equal(report.areas[eng.id].remark, 'Very good work. Keep it up!');
   assert.equal(report.areas[eng.id].average, 75);
 });
 

@@ -20,7 +20,7 @@ Only school **admins** sign in, e.g. the head teacher and the ICT person. **Teac
    - An assessment created by mistake can be deleted.
 5. **Class results:** the class teacher's sheet for a term, with every learner's term average per learning area and the class means. It prints landscape or downloads as Excel.
 6. **Report forms:** one A4 page per learner. They can be printed for one learner or the whole class, or **downloaded as a ZIP with one PDF per learner**, named after them.
-   - It shows scores for each assessment type, the term average and CBC level per learning area, an automatic **rubric remark** (e.g. EE2 "Very good. Exceeding expectations."; strand-by-strand schools also get "Work on <strand>.") with the subject teacher's initials, and the overall average.
+   - It shows scores for each assessment type, the term average and CBC level per learning area, an automatic **rubric remark** (always encouraging, e.g. EE2 "Very good work. Keep it up!", AE1 "Making progress. Keep practising."; strand-by-strand schools also get "Next, focus on <strand>.") with the subject teacher's initials, and the overall average.
    - It also shows strongest areas, areas needing support, strands to work on, the class and head teacher's comments, signatures, the stamp, and term dates.
    - The class and head teacher's comments are **drafted from the results**, and the admin edits them before printing.
    - **Closing the term** locks its results and comments so printed reports stay final. Until then reports are marked *provisional*.

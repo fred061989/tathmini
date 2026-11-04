@@ -41,8 +41,8 @@ test('absences are shown, not counted as zero', () => {
 
 test("rubric remark and the teacher's initials", () => {
   const t = buildTerm({ learners, assessments, results, comments, scale });
-  assert.equal(t.learners[0].areas.M.remark, 'Very good. Exceeding expectations.'); // 80% = EE2
-  assert.equal(t.learners[0].areas.E.remark, 'Needs improvement. Approaching expectations.'); // 40% = AE1
+  assert.equal(t.learners[0].areas.M.remark, 'Very good work. Keep it up!'); // 80% = EE2
+  assert.equal(t.learners[0].areas.E.remark, 'Making progress. Keep practising.'); // 40% = AE1
   assert.equal(t.learners[0].areas.M.teacher_initials, 'W.M.');
   assert.equal(initials('Mrs Janet Wanjiku'), 'J.W.');
 });
@@ -60,12 +60,12 @@ test('strengths, needs support, strands and class means', () => {
 test('comment drafts follow the results', () => {
   const t = buildTerm({ learners, assessments, results, comments, scale });
   const c = draftClassComment(t.learners[0], scale);
-  assert.match(c, /^Amani has had a good term, meeting expectations or above in 1 of 2 learning areas, with excellent work in Mathematics\. English needs extra effort\. Keep it up!$/);
+  assert.match(c, /^Amani has had a good term, meeting expectations or above in 1 of 2 learning areas, with excellent work in Mathematics\. Next, focus on English\. Keep it up!$/);
   assert.equal(draftHeadComment(t.learners[0], scale), "A good term's work. Keep up the effort in English.");
   const top = { ...t.learners[0], overall_percent: 92, overall_level: 'EE1' };
   assert.match(draftClassComment(top, scale), /excellent term/);
   const low = { ...t.learners[0], overall_percent: 15, overall_level: 'BE1', strongest: [] };
-  assert.match(draftClassComment(low, scale), /needs close support/);
+  assert.match(draftClassComment(low, scale), /is growing steadily.*will keep improving\.$/);
   assert.equal(draftClassComment({ ...t.learners[0], overall_percent: null }, scale), '');
 });
 
@@ -81,7 +81,7 @@ test("comments only say 'excellent' for exceeding expectations, and 'fair' when 
   const base = { first_name: 'Dalia', overall_percent: 48.7, overall_level: 'ME2', meeting: 5, assessed_areas: 9, weak_strands: [] };
   const fair = { ...base, strongest: ['Integrated Science'], strongest_exceeding: false, needs_support: ['English', 'Kiswahili', 'Mathematics', 'Social Studies'] };
   assert.equal(draftClassComment(fair, scale),
-    'Dalia has had a fair term, meeting expectations or above in 5 of 9 learning areas, with good work in Integrated Science. English needs extra effort. More effort in English, Kiswahili and Mathematics will help.');
+    'Dalia has had a fair term, meeting expectations or above in 5 of 9 learning areas, with good work in Integrated Science. Next, focus on English. More effort in English, Kiswahili and Mathematics will help.');
   assert.equal(draftHeadComment(fair, scale), 'A fair term. More effort is needed in English and Kiswahili.');
   const good = { ...base, overall_percent: 70, overall_level: 'ME1', strongest: ['Kiswahili'], strongest_exceeding: true, needs_support: [] };
   assert.match(draftClassComment(good, scale), /good term.*excellent work in Kiswahili\. Keep it up!$/);
@@ -100,10 +100,10 @@ test('primary (4-level) term results and comments', () => {
   const [amani, baraka] = t.learners;
   assert.deepEqual([amani.areas.S.level, amani.areas.M.level, amani.overall_level], ['EE', 'AE', 'ME']);
   assert.equal(amani.strongest_exceeding, true);
-  assert.match(draftClassComment(amani, s4), /^Amani has had a good term, meeting expectations or above in 2 of 3 learning areas, with excellent work in Science and Technology and English\. Mathematics needs extra effort\. Keep it up!$/);
+  assert.match(draftClassComment(amani, s4), /^Amani has had a good term, meeting expectations or above in 2 of 3 learning areas, with excellent work in Science and Technology and English\. Next, focus on Mathematics\. Keep it up!$/);
   assert.deepEqual([baraka.overall_level, baraka.needs_support.length], ['BE', 3]);
-  assert.match(draftClassComment(baraka, s4), /^Baraka needs close support to reach expectations\./);
-  assert.equal(draftHeadComment(baraka, s4), 'Needs close support. Please work with the school to help the learner improve.');
+  assert.match(draftClassComment(baraka, s4), /^Baraka is growing steadily\./);
+  assert.equal(draftHeadComment(baraka, s4), 'Keep working hard. With support at school and at home, steady progress will come.');
   assert.deepEqual(t.areas.map(x => x.name), ['English', 'Mathematics', 'Science and Technology']);
 });
 
@@ -134,7 +134,7 @@ test('strand by strand: marks for each strand are added up over the term, then a
   // Numbers = (12 + 50) / (20 + 50) = 62/70 = 88.6%; Algebra = 4/10 = 40%; Maths = 66/80 = 82.5%
   assert.deepEqual(amani.areas.M.strands.map(x => [x.name, x.percent, x.level, x.scored, x.out_of]), [['Numbers', 88.6, 'EE2', 62, 70], ['Algebra', 40, 'AE1', 4, 10]]);
   assert.equal(amani.areas.M.average, 82.5);
-  assert.equal(amani.areas.M.remark, 'Very good. Exceeding expectations. Work on Algebra.');
+  assert.equal(amani.areas.M.remark, 'Very good work. Keep it up! Next, focus on Algebra.');
   // English has no strand marks, so its total counts
   assert.equal(amani.areas.E.average, 55);
   assert.deepEqual(amani.weak_strands.map(x => x.label), ['Mathematics › Algebra']);

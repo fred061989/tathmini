@@ -820,8 +820,8 @@ function reportForm(x, r) {
         <div class="side">
           <div>Meeting expectations or above in <b>${x.meeting} of ${x.assessed_areas}</b> learning areas.</div>
           ${x.strongest.length ? `<div><b>Strongest:</b> ${esc(x.strongest.join(', '))}.</div>` : ''}
-          ${x.needs_support.length ? `<div><b>Needs support:</b> ${esc(x.needs_support.join(', '))}.</div>` : ''}
-          ${x.weak_strands.length ? `<div><b>Strands to work on:</b> ${esc(x.weak_strands.map(s => s.label).join('; '))}.</div>` : ''}
+          ${x.needs_support.length ? `<div><b>Focus next on:</b> ${esc(x.needs_support.join(', '))}.</div>` : ''}
+          ${x.weak_strands.length ? `<div><b>Strands to focus on:</b> ${esc(x.weak_strands.map(s => s.label).join('; '))}.</div>` : ''}
           ${extra.join('')}
         </div>
       </div>
@@ -1512,7 +1512,7 @@ async function renderHelp() {
       <li>Each teacher receives an email from Google with their sheet. They type marks and put <b>Y</b> under Absent for absent learners. The sheet works out
         each learner's % and CBC level as they type. Names are locked, and marks above the "Out of" are refused.</li>
       <li>Teachers don't write comments: the report form shows a <b>rubric remark</b> for each learning area from the level
-        (e.g. ME1 "Good. Meeting expectations."; strand-by-strand schools also get the strand to work on).</li>
+        (e.g. ME1 "Good work. Keep it up!"). Remarks are always encouraging; strand-by-strand schools also get the strand to focus on next.</li>
       <li>A teacher who cannot use Google Sheets can give you the marks on paper: open the assessment and press <b>Enter scores here</b>.</li>
     </ol>`)}
     ${step(3, 'Analyse', `<ol>
