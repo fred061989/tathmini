@@ -407,7 +407,14 @@ async function renderResults() {
         </tbody></table></div>
       <p class="muted">${s.areas.map(a => `${esc(a.code || '')} = ${esc(a.name)}`).join(' · ')}</p>
     </div>`;
-  $('#print').onclick = () => window.print();
+  // The class sheet prints landscape with margins; report forms print portrait edge to edge.
+  $('#print').onclick = () => {
+    const style = document.createElement('style');
+    style.textContent = '@page { size: A4 landscape; margin: 10mm; }';
+    document.head.appendChild(style);
+    window.print();
+    style.remove();
+  };
 }
 
 // ---------- Report forms: comments, term dates, closing the term ----------
@@ -518,7 +525,7 @@ const longDate = d => (d ? new Date(d + 'T00:00:00').toLocaleDateString('en-KE',
 
 function reportForm(x, r) {
   const sch = r.school;
-  const crest = (sch.short_name || sch.name).split(/\s+/).filter(w => /^[A-Za-z]/.test(w)).map(w => w[0]).join('').slice(0, 3).toUpperCase();
+  const crest = sch.name.split(/\s+/).filter(w => /^[A-Za-z]/.test(w) && !/^(of|and|the)$/i.test(w)).map(w => w[0]).join('').slice(0, 3).toUpperCase();
   const meta = [sch.address, sch.county ? `${sch.county} County` : '', sch.phone, sch.email].filter(Boolean).map(esc).join(' &nbsp;·&nbsp; ');
   const key = levelsFor(r.class.grade);
   const pairs = [];

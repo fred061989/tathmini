@@ -68,3 +68,21 @@ test('comment drafts follow the results', () => {
   assert.match(draftClassComment(low, scale), /needs close support/);
   assert.equal(draftClassComment({ ...t.learners[0], overall_percent: null }, scale), '');
 });
+
+test('learning areas follow the usual report order, not the alphabet', () => {
+  const t = buildTerm({ learners, assessments, results, comments, scale });
+  assert.deepEqual(t.areas.map(a => a.name), ['English', 'Mathematics']);
+  const extra = [...assessments, { id: 'k1', learning_area_id: 'K', learning_areas: { name: 'Kiswahili', code: 'KIS' }, kind: 'end_term', assessed_on: '2027-03-27' },
+    { id: 'z1', learning_area_id: 'Z', learning_areas: { name: 'Agriculture and Nutrition', code: 'AGN' }, kind: 'end_term', assessed_on: '2027-03-27' }];
+  assert.deepEqual(buildTerm({ learners, assessments: extra, results, scale }).areas.map(a => a.name), ['English', 'Kiswahili', 'Mathematics', 'Agriculture and Nutrition']);
+});
+
+test("comments only say 'excellent' for exceeding expectations, and 'fair' when several areas need support", () => {
+  const base = { first_name: 'Dalia', overall_percent: 48.7, overall_level: 'ME2', meeting: 5, assessed_areas: 9, weak_strands: [] };
+  const fair = { ...base, strongest: ['Integrated Science'], strongest_exceeding: false, needs_support: ['English', 'Kiswahili', 'Mathematics', 'Social Studies'] };
+  assert.equal(draftClassComment(fair, scale),
+    'Dalia has had a fair term, meeting expectations or above in 5 of 9 learning areas, with good work in Integrated Science. English needs extra effort. More effort in English, Kiswahili and Mathematics will help.');
+  assert.equal(draftHeadComment(fair, scale), 'A fair term. More effort is needed in English and Kiswahili.');
+  const good = { ...base, overall_percent: 70, overall_level: 'ME1', strongest: ['Kiswahili'], strongest_exceeding: true, needs_support: [] };
+  assert.match(draftClassComment(good, scale), /good term.*excellent work in Kiswahili\. Keep it up!$/);
+});
