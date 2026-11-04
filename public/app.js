@@ -293,7 +293,7 @@ function strandRow(label, strandId, subId) {
 // ---------- One assessment ----------
 
 async function renderAssessment(id) {
-  const { assessment: a, components, results } = await api('GET', `/api/assessments/${id}`);
+  const { assessment: a, components, results, learners, scores, term_closed: closed } = await api('GET', `/api/assessments/${id}`);
   const s = a.summary;
   view().innerHTML = `
     <p><a href="#dashboard">← Assessments</a></p>
@@ -303,10 +303,13 @@ async function renderAssessment(id) {
       ${a.sheet_url ? `<a class="btn secondary" href="${esc(a.sheet_url)}" target="_blank" rel="noopener">Open Google Sheet</a>` : ''}
       ${!a.sheet_id ? '<button id="gen">Create and send sheet</button>' : ''}
       ${a.status === 'sheet_ready' ? '<button class="secondary" id="progress">Check progress</button>' : ''}
-      ${a.sheet_id ? `<button id="analyse">${s ? 'Re-analyse' : 'Analyse'}</button>` : ''}
+      ${a.sheet_id && !closed ? `<button id="analyse">${s ? 'Re-analyse from sheet' : 'Analyse'}</button>` : ''}
+      ${closed ? '' : '<button class="secondary" id="type">Enter scores here</button>'}
       ${s ? `<a class="btn secondary" href="#results?class=${a.class_id}&term=${a.term}&year=${a.year}">Class results for the term</a>` : ''}
     </div>
+    ${closed ? `<p class="notice">Term ${a.term} ${a.year} is closed, so these results are locked.</p>` : ''}
     <div id="m" style="margin-top:12px"></div>
+    <div id="grid"></div>
     <p class="muted">Scored on: ${components.map(c => `${esc(c.label)} (/${Number(c.max_score)})`).join(', ')}</p>
     ${s ? summaryHtml(s) : ''}
     ${results.length ? resultsHtml(results, components) : ''}`;
@@ -318,6 +321,7 @@ async function renderAssessment(id) {
       notice(m, null, `${p.entered} of ${p.total} learners entered by ${a.staff?.full_name || 'the teacher'}${p.partial ? ` (${p.partial} more partly filled in)` : ''}${p.complete ? ' — ready to analyse.' : '.'}${p.issues.length ? ' ' + p.issues.join(' ') : ''}`);
     });
   }
+  if ($('#type')) $('#type').onclick = () => scoreGrid($('#grid'), a, components, learners, scores);
   if ($('#analyse')) {
     $('#analyse').onclick = action($('#analyse'), m, async () => {
       const out = await api('POST', `/api/assessments/${id}/analyse`, {});
@@ -325,6 +329,46 @@ async function renderAssessment(id) {
       if (out.issues?.length) notice($('#m'), null, `Analysed. Notes: ${out.issues.join(' ')}`);
     });
   }
+}
+
+// Typing scores in the app: a backup when a teacher cannot use the Google Sheet.
+function scoreGrid(box, a, components, learners, saved) {
+  const key = (l, c) => `${l}:${c}`;
+  const savedOf = new Map(saved.map(x => [key(x.learner_id, x.component_id), x]));
+  const first = components[0];
+  box.innerHTML = `
+    <div class="card">
+      <h2 style="margin-top:0">Enter scores</h2>
+      <p class="muted">Type each learner's marks, tick Absent for learners who missed the assessment, and add a short comment if you like
+        (it appears on the report form). ${a.sheet_id ? 'Saving here replaces what was read from the Google Sheet; analysing from the sheet again later would replace these.' : ''}</p>
+      <form id="sg"><div class="table-wrap"><table>
+        <thead><tr><th>Learner</th>${components.map(c => `<th class="num">${esc(c.label)} (/${Number(c.max_score)})</th>`).join('')}<th>Absent</th><th>Comment</th></tr></thead>
+        <tbody>${learners.map(l => {
+          const firstSaved = savedOf.get(key(l.id, first.id));
+          return `<tr data-l="${l.id}"><td>${esc(l.first_name)} ${esc(l.last_name)} <span class="muted">${esc(l.adm_no || '')}</span></td>
+            ${components.map(c => `<td class="num"><input type="number" min="0" max="${Number(c.max_score)}" step="any" data-c="${c.id}"
+              value="${esc(savedOf.get(key(l.id, c.id))?.raw_score ?? '')}" style="width:80px"></td>`).join('')}
+            <td><input type="checkbox" data-absent ${firstSaved?.absent ? 'checked' : ''}></td>
+            <td><input data-comment value="${esc(firstSaved?.comment || '')}" maxlength="300" style="min-width:220px"></td></tr>`;
+        }).join('') || `<tr><td colspan="${components.length + 3}" class="muted">No learners paid for this term in this class.</td></tr>`}</tbody>
+      </table></div>
+      <p class="row"><button>Save and analyse</button><button type="button" class="secondary" data-close>Close</button></p></form>
+      <div data-msg></div>
+    </div>`;
+  const f = $('#sg', box);
+  $('[data-close]', box).onclick = () => { box.innerHTML = ''; };
+  f.onsubmit = action($('button', f), $('[data-msg]', box), async () => {
+    const out = [];
+    for (const row of $$('[data-l]', f)) {
+      const absent = $('[data-absent]', row).checked;
+      const comment = $('[data-comment]', row).value.trim() || null;
+      $$('[data-c]', row).forEach((input, i) => out.push({
+        learner_id: row.dataset.l, component_id: input.dataset.c, raw_score: absent ? null : input.value, absent, comment: i === 0 ? comment : null,
+      }));
+    }
+    await api('POST', `/api/assessments/${a.id}/analyse`, { scores: out });
+    route();
+  });
 }
 
 function summaryHtml(s) {

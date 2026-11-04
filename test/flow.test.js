@@ -296,3 +296,35 @@ test('managing teachers: edit, remove, and reassign their learning areas', async
   ok(await admin('POST', '/api/assignments', { teacher_id: janet.id, class_id: cls.id, learning_area_id: maths.id }));
   assert.equal(fake.store.teacher_assignments.find(a => a.class_id === cls.id).teacher_id, janet.id);
 });
+
+test('scores typed in the app (no Google Sheet) are analysed and reach the report form', async () => {
+  const cls = ok(await admin('POST', '/api/classes', { grade: 7, stream: 'South', year: new Date().getFullYear() }));
+  const added = ok(await admin('POST', '/api/learners', { class_id: cls.id, learners: [
+    { adm_no: '301', first_name: 'Neema', last_name: 'Wairimu' }, { adm_no: '302', first_name: 'Omondi', last_name: 'Ochieng' }] }));
+  ok(await admin('POST', '/api/billing/pay', { learner_ids: added.added_ids, year: cls.year, term: 2, plan: 'term' }));
+  const eng = ok(await admin('GET', '/api/curriculum')).find(a => a.name === 'English');
+  const janet = fake.store.staff.find(s => s.full_name === 'Janet Wanjiku');
+  const asg = ok(await admin('POST', '/api/assignments', { teacher_id: janet.id, class_id: cls.id, learning_area_id: eng.id }));
+  const token = fake.store.schools[0].google_refresh_token;
+  fake.store.schools[0].google_refresh_token = null; // Google not connected: the assessment stays a draft
+  const a = ok(await admin('POST', '/api/assessments', { assignment_ids: [asg.id], kind: 'monthly', term: 2, year: cls.year, max_score: 40 })).created[0].assessment;
+  fake.store.schools[0].google_refresh_token = token;
+  assert.equal(a.status, 'draft');
+  const detail = ok(await admin('GET', `/api/assessments/${a.id}`));
+  assert.equal(detail.learners.length, 2);
+  const [neema, omondi] = [added.added_ids[0], added.added_ids[1]];
+  const comp = detail.components[0].id;
+  const bad = await admin('POST', `/api/assessments/${a.id}/analyse`, { scores: [{ learner_id: neema, component_id: comp, raw_score: '45' }] });
+  assert.equal(bad.status, 422);
+  const out = ok(await admin('POST', `/api/assessments/${a.id}/analyse`, { scores: [
+    { learner_id: neema, component_id: comp, raw_score: '30', comment: 'Lovely handwriting.' },
+    { learner_id: omondi, component_id: comp, raw_score: '', absent: true },
+    { learner_id: neema, component_id: 'someone-elses-component', raw_score: '1' },
+  ] }));
+  assert.deepEqual([out.summary.assessed, out.summary.absent, out.summary.mean_percent], [1, 1, 75]);
+  const again = ok(await admin('GET', `/api/assessments/${a.id}`));
+  assert.equal(again.scores.find(x => x.learner_id === neema).raw_score, '30');
+  const report = ok(await admin('GET', `/api/reports/termly?class_id=${cls.id}&year=${cls.year}&term=2&learner_id=${neema}`)).reports[0];
+  assert.equal(report.areas[eng.id].comment, 'Lovely handwriting.');
+  assert.equal(report.areas[eng.id].average, 75);
+});
