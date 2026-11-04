@@ -431,27 +431,22 @@ function dueText(a) {
 function scoreGrid(box, a, components, learners, saved, unpaid = []) {
   const key = (l, c) => `${l}:${c}`;
   const savedOf = new Map(saved.map(x => [key(x.learner_id, x.component_id), x]));
-  const first = components[0];
   box.innerHTML = `
     <div class="card">
       <h2 style="margin-top:0">Enter scores</h2>
-      <p class="muted">Type each learner's marks and tick Absent for learners who missed the assessment. The % and CBC level are worked out
-        as you type. ${a.sheet_id ? 'Saving here replaces what was read from the Google Sheet; analysing from the sheet again later would replace these.' : ''}</p>
+      <p class="muted">Type each learner's marks. Type <b>AB</b> in any box where the learner was absent: it is left out, not counted as zero.
+        The % and CBC level are worked out as you type. ${a.sheet_id ? 'Saving here replaces what was read from the Google Sheet; analysing from the sheet again later would replace these.' : ''}</p>
       <form id="sg"><div class="table-wrap"><table>
-        <thead><tr><th>Learner</th>${components.map(c => `<th class="num">${esc(c.label)}</th>`).join('')}<th>Absent</th><th class="num">%</th><th>Level</th></tr></thead>
+        <thead><tr><th>Learner</th>${components.map(c => `<th class="num">${esc(c.label)}</th>`).join('')}<th class="num">%</th><th>Level</th></tr></thead>
         <tbody><tr class="out-of"><td><strong>Out of</strong> <span class="muted">(change if marked out of something else)</span></td>
-          ${components.map(c => `<td class="num"><input type="number" min="1" max="1000" step="any" required data-max="${c.id}" value="${Number(c.max_score)}" style="width:80px"></td>`).join('')}<td></td><td></td><td></td></tr>
-        ${learners.map(l => {
-          const firstSaved = savedOf.get(key(l.id, first.id));
-          return `<tr data-l="${l.id}"><td>${esc(l.first_name)} ${esc(l.last_name)} <span class="muted">${esc(l.adm_no || '')}</span></td>
-            ${components.map(c => `<td class="num"><input type="number" min="0" step="any" data-c="${c.id}"
-              value="${esc(savedOf.get(key(l.id, c.id))?.raw_score ?? '')}" style="width:80px"></td>`).join('')}
-            <td><input type="checkbox" data-absent ${firstSaved?.absent ? 'checked' : ''}></td>
-            <td class="num" data-pct></td><td data-lvl></td></tr>`;
-        }).join('')}
-        ${unpaid.map(l => `<tr class="unpaid"><td>${esc(l.name)}</td><td colspan="${components.length + 3}" class="muted">Not paid for Term ${a.term} ${a.year}: scores cannot be entered.
+          ${components.map(c => `<td class="num"><input type="number" min="1" max="1000" step="any" required data-max="${c.id}" value="${Number(c.max_score)}" style="width:80px"></td>`).join('')}<td></td><td></td></tr>
+        ${learners.map(l => `<tr data-l="${l.id}"><td>${esc(l.first_name)} ${esc(l.last_name)} <span class="muted">${esc(l.adm_no || '')}</span></td>
+            ${components.map(c => { const sv = savedOf.get(key(l.id, c.id)); return `<td class="num"><input inputmode="decimal" data-c="${c.id}" autocomplete="off"
+              pattern="\\s*([Aa][Bb]|\\d+(\\.\\d+)?)\\s*" title="A mark, or AB if absent" value="${esc(sv?.absent ? 'AB' : sv?.raw_score ?? '')}" style="width:80px;text-align:right"></td>`; }).join('')}
+            <td class="num" data-pct></td><td data-lvl></td></tr>`).join('')}
+        ${unpaid.map(l => `<tr class="unpaid"><td>${esc(l.name)}</td><td colspan="${components.length + 2}" class="muted">Not paid for Term ${a.term} ${a.year}: scores cannot be entered.
           <a href="#settings?term=${a.term}&year=${a.year}">Pay</a></td></tr>`).join('')}
-        ${learners.length || unpaid.length ? '' : `<tr><td colspan="${components.length + 4}" class="muted">No learners in this class.</td></tr>`}</tbody>
+        ${learners.length || unpaid.length ? '' : `<tr><td colspan="${components.length + 3}" class="muted">No learners in this class.</td></tr>`}</tbody>
       </table></div>
       <p class="row"><button>Save and analyse</button><button type="button" class="secondary" data-close>Close</button></p></form>
       <div data-msg></div>
@@ -463,11 +458,14 @@ function scoreGrid(box, a, components, learners, saved, unpaid = []) {
   const live = () => {
     const max = Object.fromEntries($$('[data-max]', f).map(i => [i.dataset.max, Number(i.value)]));
     for (const row of $$('[data-l]', f)) {
-      let got = 0; let out = 0;
-      for (const i of $$('[data-c]', row)) if (i.value !== '') { got += Number(i.value); out += max[i.dataset.c] || 0; }
-      const absent = $('[data-absent]', row).checked;
-      const p = absent || !out ? null : Math.round((got / out) * 1000) / 10;
-      $('[data-pct]', row).textContent = absent ? 'ABS' : p == null ? '' : p;
+      let got = 0; let out = 0; let ab = 0;
+      for (const i of $$('[data-c]', row)) {
+        const v = i.value.trim();
+        if (/^ab$/i.test(v)) ab++;
+        else if (v !== '' && Number.isFinite(Number(v))) { got += Number(v); out += max[i.dataset.c] || 0; }
+      }
+      const p = out ? Math.round((got / out) * 1000) / 10 : null;
+      $('[data-pct]', row).textContent = p != null ? p : ab ? 'AB' : '';
       $('[data-lvl]', row).innerHTML = p == null ? '' : pill(key2.find(l => p >= l.min)?.code);
     }
   };
@@ -476,10 +474,7 @@ function scoreGrid(box, a, components, learners, saved, unpaid = []) {
   f.onsubmit = action($('button', f), $('[data-msg]', box), async () => {
     const out = [];
     for (const row of $$('[data-l]', f)) {
-      const absent = $('[data-absent]', row).checked;
-      $$('[data-c]', row).forEach((input, i) => out.push({
-        learner_id: row.dataset.l, component_id: input.dataset.c, raw_score: absent ? null : input.value, absent,
-      }));
+      $$('[data-c]', row).forEach(input => out.push({ learner_id: row.dataset.l, component_id: input.dataset.c, raw_score: input.value.trim() }));
     }
     const max_scores = $$('[data-max]', f).map(i => ({ component_id: i.dataset.max, max_score: Number(i.value) }));
     await api('POST', `/api/assessments/${a.id}/analyse`, { scores: out, max_scores });
@@ -771,20 +766,20 @@ function perfTable(x, r) {
       <thead><tr><th style="text-align:left">Learning area</th><th style="text-align:left">Strands (level)</th>${head('Term<br>average')}</tr></thead>
       <tbody>${r.areas.map(a => { const v = x.areas[a.id]; const sts = (v.strands || []).filter(st => st.level);
         return `<tr><td>${esc(a.name)}</td><td class="strands">${sts.map(st => `<span>${esc(st.name)} ${rfPill(st.level)}</span>`).join('')
-          || (v.cells?.absent ? '<span class="abs">ABS</span>' : v.average != null ? '<span class="note">Total marks (not by strand)</span>' : '')}</td>${avg(v)}${rfComment(v)}</tr>`; }).join('')}
+          || (v.cells?.absent ? '<span class="abs">AB</span>' : v.average != null ? '<span class="note">Total marks (not by strand)</span>' : '')}</td>${avg(v)}${rfComment(v)}</tr>`; }).join('')}
         ${overall('<td></td>')}</tbody></table>
       <div class="note">Each strand's level comes from all of the learner's marks for that strand this term, added up (marks scored ÷ marks possible); the term percentage adds up all strand marks.
-        ABS = absent. The overall average gives each learning area equal weight. CBC learners are not ranked.</div>`;
+        AB = absent. The overall average gives each learning area equal weight. CBC learners are not ranked.</div>`;
   }
   return `<table class="perf"><colgroup><col style="width:34mm">${r.columns.map(() => '<col style="width:11.5mm">').join('')}${tail}</colgroup>
       <thead><tr><th style="text-align:left">Learning area</th>${r.columns.map(c => `<th class="num">${esc(c.label)}<br>%</th>`).join('')}${head('Term<br>average')}</tr></thead>
       <tbody>
         ${r.areas.map(a => { const v = x.areas[a.id]; return `<tr><td>${esc(a.name)}</td>
-          ${r.columns.map(c => { const cell = v.cells[c.kind]; return `<td class="num">${!cell ? '' : cell.absent ? '<span class="abs">ABS</span>' : rfNum(cell.percent)}</td>`; }).join('')}
+          ${r.columns.map(c => { const cell = v.cells[c.kind]; return `<td class="num">${!cell ? '' : cell.absent ? '<span class="abs">AB</span>' : rfNum(cell.percent)}</td>`; }).join('')}
           ${avg(v)}${rfComment(v)}</tr>`; }).join('')}
         ${overall(`<td colspan="${r.columns.length}"></td>`)}
       </tbody></table>
-    <div class="note">ABS = absent: left out of the average, not counted as zero. Each assessment type counts once in the term average, and the overall average gives each learning area equal weight. CBC learners are not ranked.</div>`;
+    <div class="note">AB = absent: left out of the average, not counted as zero. Each assessment type counts once in the term average, and the overall average gives each learning area equal weight. CBC learners are not ranked.</div>`;
 }
 
 function reportForm(x, r) {
@@ -1509,7 +1504,7 @@ async function renderHelp() {
         (marks scored ÷ marks possible) into a percentage and a CBC level.</li>
       <li><b>Only paid-for learners</b> get scores. Unpaid learners are listed, but no scores can be entered for them and they are not on
         teachers' sheets. When you pay for a learner later, they are added automatically to the bottom of every sheet already sent for that term.</li>
-      <li>Each teacher receives an email from Google with their sheet. They type marks and put <b>Y</b> under Absent for absent learners. The sheet works out
+      <li>Each teacher receives an email from Google with their sheet. They type marks, and <b>AB</b> in any box where a learner was absent (left out, not counted as zero). The sheet works out
         each learner's % and CBC level as they type. Names are locked, and marks above the "Out of" are refused.</li>
       <li>Teachers don't write comments: the report form shows a <b>rubric remark</b> for each learning area from the level
         (e.g. ME1 "Good work. Keep it up!"). Remarks are always encouraging; strand-by-strand schools also get the strand to focus on next.</li>

@@ -43,7 +43,7 @@ function fill(scoresByName, comments = {}) {
   const layout = sheets.buildSheetLayout(created[created.length - 1]);
   return [...layout.top, ...layout.rows.map(r => {
     const s = scoresByName[r[2]];
-    if (s === 'absent') return [...r.slice(0, layout.scoreEnd), 'Y', ''];
+    if (s === 'absent') return [...r.slice(0, layout.scoreStart), ...r.slice(layout.scoreStart, layout.scoreEnd).map(() => 'AB'), '', ''];
     if (!s) return r;
     return [...r.slice(0, layout.scoreStart), ...s, '', comments[r[2]] || ''];
   })];

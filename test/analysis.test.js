@@ -46,3 +46,16 @@ test('progress against the previous assessment', () => {
   assert.equal(results.find(r => r.learner_id === 'a').change, 10);
   assert.deepEqual(summary.most_improved.map(m => m.learner_id), ['a']);
 });
+
+test('AB in a mark box: that strand is left out, the rest still count', () => {
+  const s = [
+    { learner_id: 'a', component_id: 'c1', raw_score: 'ab' }, { learner_id: 'a', component_id: 'c2', raw_score: '9' },
+    { learner_id: 'b', component_id: 'c1', raw_score: 'AB' }, { learner_id: 'b', component_id: 'c2', raw_score: 'AB' },
+    { learner_id: 'c', component_id: 'c1', raw_score: 'away' },
+  ];
+  const { results, errors } = analyseAssessment({ components, learners, scores: s, scale: buildScale('cbc8') });
+  const a = results.find(r => r.learner_id === 'a');
+  assert.deepEqual([a.status, a.percent, a.strands[0].absent, a.strands[0].percent], ['assessed', 90, true, null]); // 9/10 only
+  assert.equal(results.find(r => r.learner_id === 'b').status, 'absent');
+  assert.match(errors[0].message, /or AB if absent/);
+});
