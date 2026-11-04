@@ -2,7 +2,7 @@
 
 Assessment records and termly report forms for Kenyan CBC schools (Phase 1).
 
-Only school **admins** sign in, e.g. the head teacher and the ICT person. **Teachers never sign in**: they receive a Google Sheet for each assessment by Gmail, fill in scores (and optionally a short comment per learner), and the school does the rest.
+Only school **admins** sign in, e.g. the head teacher and the ICT person. **Teachers never sign in**: they receive a Google Sheet for each assessment by Gmail, type the marks (the sheet shows each learner's % and CBC level as they type), and the school does the rest. Teachers write no comments.
 
 ## How it works
 
@@ -14,13 +14,13 @@ Only school **admins** sign in, e.g. the head teacher and the ICT person. **Teac
 
    Learning areas, strands and sub-strands come from the **national curriculum**. Learners and teachers can be edited, moved or removed (history is kept), and teachers who leave have their learning areas flagged for reassignment.
 2. **New assessment:** pick the class and learning areas, the type (opener, weekly, monthly, mid-term, end-term or custom), the term, and whether to score it as a total, **per strand** or **per sub-strand**. Several learning areas can be created at once.
-3. **Score sheets:** a Google Sheet per learning area is created in the school's Google account, with the class list filled in and locked, and shared with that subject's teacher by Gmail. Scores are validated against each strand's maximum; absent learners are marked Y.
+3. **Score sheets:** a Google Sheet per learning area is created in the school's Google account, with the class list filled in and locked, and shared with that subject's teacher by Gmail. Scores are checked against each column's "Out of"; absent learners are marked Y. Locked **%** and **Level** columns work out each learner's percentage and CBC level as the teacher types.
 4. **Check progress, then Analyse:** the admin sees "6/8 entered, 1 partly", then presses **Analyse**. Scores become CBC levels per learner and strand, with class means, strands to re-teach, learners needing support, and progress since the last assessment. Learners are not ranked.
    - A teacher who can't use Google Sheets can hand in marks on paper; the admin types them in with **Enter scores here**.
    - An assessment created by mistake can be deleted.
 5. **Class results:** the class teacher's sheet for a term, with every learner's term average per learning area and the class means. It prints landscape or downloads as Excel.
 6. **Report forms:** one A4 page per learner. They can be printed for one learner or the whole class, or **downloaded as a ZIP with one PDF per learner**, named after them.
-   - It shows scores for each assessment type, the term average and CBC level per learning area, the subject teacher's comment and initials, and the overall average.
+   - It shows scores for each assessment type, the term average and CBC level per learning area, an automatic **rubric remark** (e.g. EE2 "Very good. Exceeding expectations."; strand-by-strand schools also get "Work on <strand>.") with the subject teacher's initials, and the overall average.
    - It also shows strongest areas, areas needing support, strands to work on, the class and head teacher's comments, signatures, the stamp, and term dates.
    - The class and head teacher's comments are **drafted from the results**, and the admin edits them before printing.
    - **Closing the term** locks its results and comments so printed reports stay final. Until then reports are marked *provisional*.
@@ -88,7 +88,7 @@ Set `PLATFORM_OWNER_EMAILS` to your sign-in email. You then get:
 
 - `lib/cbc.js`: grading.
 - `lib/analysis.js`: one assessment.
-- `lib/term.js`: term averages (by type or strand by strand), end-of-year averages, comment drafts.
+- `lib/term.js`: term averages (by type or strand by strand), end-of-year averages, rubric remarks, class and head teacher comment drafts.
 - `lib/sheets.js`: Google Sheets.
 - `lib/billing.js`: learner fees.
 - `lib/routes/*`: the API.

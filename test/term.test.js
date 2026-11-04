@@ -39,11 +39,11 @@ test('absences are shown, not counted as zero', () => {
   assert.equal(baraka.areas.M.average, 50);
 });
 
-test("teacher's latest comment and initials", () => {
+test("rubric remark and the teacher's initials", () => {
   const t = buildTerm({ learners, assessments, results, comments, scale });
-  assert.equal(t.learners[0].areas.M.comment, 'Revise geometry.');
+  assert.equal(t.learners[0].areas.M.remark, 'Very good. Exceeding expectations.'); // 80% = EE2
+  assert.equal(t.learners[0].areas.E.remark, 'Needs improvement. Approaching expectations.'); // 40% = AE1
   assert.equal(t.learners[0].areas.M.teacher_initials, 'W.M.');
-  assert.equal(t.learners[0].areas.E.comment, null);
   assert.equal(initials('Mrs Janet Wanjiku'), 'J.W.');
 });
 
@@ -134,6 +134,7 @@ test('strand by strand: marks for each strand are added up over the term, then a
   // Numbers = (12 + 50) / (20 + 50) = 62/70 = 88.6%; Algebra = 4/10 = 40%; Maths = 66/80 = 82.5%
   assert.deepEqual(amani.areas.M.strands.map(x => [x.name, x.percent, x.level, x.scored, x.out_of]), [['Numbers', 88.6, 'EE2', 62, 70], ['Algebra', 40, 'AE1', 4, 10]]);
   assert.equal(amani.areas.M.average, 82.5);
+  assert.equal(amani.areas.M.remark, 'Very good. Exceeding expectations. Work on Algebra.');
   // English has no strand marks, so its total counts
   assert.equal(amani.areas.E.average, 55);
   assert.deepEqual(amani.weak_strands.map(x => x.label), ['Mathematics › Algebra']);

@@ -266,7 +266,7 @@ async function renderNewAssessment() {
   view().innerHTML = `
     <h1>New assessment</h1>
     <p class="muted">Choose the class and learning areas. A Google Sheet with the class list is created for each learning area and
-      shared with its teacher by Gmail. Teachers only fill in scores (and a short comment per learner if they like).</p>
+      shared with its teacher by Gmail. Teachers only type marks: the % and CBC level fill in by themselves.</p>
     ${S.school.google_connected ? '' : '<div class="notice error">Google is not connected, so assessments will be saved as drafts. <a href="#settings">Connect it in Settings</a>.</div>'}
     <form id="na" class="card">
       <p><label>Class <select name="class_id" required><option value="">Choose…</option>${classes.map(c => `<option value="${c.id}">${esc(classLabel(c))}</option>`).join('')}</select></label></p>
@@ -435,36 +435,50 @@ function scoreGrid(box, a, components, learners, saved, unpaid = []) {
   box.innerHTML = `
     <div class="card">
       <h2 style="margin-top:0">Enter scores</h2>
-      <p class="muted">Type each learner's marks, tick Absent for learners who missed the assessment, and add a short comment if you like
-        (it appears on the report form). ${a.sheet_id ? 'Saving here replaces what was read from the Google Sheet; analysing from the sheet again later would replace these.' : ''}</p>
+      <p class="muted">Type each learner's marks and tick Absent for learners who missed the assessment. The % and CBC level are worked out
+        as you type. ${a.sheet_id ? 'Saving here replaces what was read from the Google Sheet; analysing from the sheet again later would replace these.' : ''}</p>
       <form id="sg"><div class="table-wrap"><table>
-        <thead><tr><th>Learner</th>${components.map(c => `<th class="num">${esc(c.label)}</th>`).join('')}<th>Absent</th><th>Comment</th></tr></thead>
+        <thead><tr><th>Learner</th>${components.map(c => `<th class="num">${esc(c.label)}</th>`).join('')}<th>Absent</th><th class="num">%</th><th>Level</th></tr></thead>
         <tbody><tr class="out-of"><td><strong>Out of</strong> <span class="muted">(change if marked out of something else)</span></td>
-          ${components.map(c => `<td class="num"><input type="number" min="1" max="1000" step="any" required data-max="${c.id}" value="${Number(c.max_score)}" style="width:80px"></td>`).join('')}<td></td><td></td></tr>
+          ${components.map(c => `<td class="num"><input type="number" min="1" max="1000" step="any" required data-max="${c.id}" value="${Number(c.max_score)}" style="width:80px"></td>`).join('')}<td></td><td></td><td></td></tr>
         ${learners.map(l => {
           const firstSaved = savedOf.get(key(l.id, first.id));
           return `<tr data-l="${l.id}"><td>${esc(l.first_name)} ${esc(l.last_name)} <span class="muted">${esc(l.adm_no || '')}</span></td>
             ${components.map(c => `<td class="num"><input type="number" min="0" step="any" data-c="${c.id}"
               value="${esc(savedOf.get(key(l.id, c.id))?.raw_score ?? '')}" style="width:80px"></td>`).join('')}
             <td><input type="checkbox" data-absent ${firstSaved?.absent ? 'checked' : ''}></td>
-            <td><input data-comment value="${esc(firstSaved?.comment || '')}" maxlength="300" style="min-width:220px"></td></tr>`;
+            <td class="num" data-pct></td><td data-lvl></td></tr>`;
         }).join('')}
-        ${unpaid.map(l => `<tr class="unpaid"><td>${esc(l.name)}</td><td colspan="${components.length + 2}" class="muted">Not paid for Term ${a.term} ${a.year}: scores cannot be entered.
+        ${unpaid.map(l => `<tr class="unpaid"><td>${esc(l.name)}</td><td colspan="${components.length + 3}" class="muted">Not paid for Term ${a.term} ${a.year}: scores cannot be entered.
           <a href="#settings?term=${a.term}&year=${a.year}">Pay</a></td></tr>`).join('')}
-        ${learners.length || unpaid.length ? '' : `<tr><td colspan="${components.length + 3}" class="muted">No learners in this class.</td></tr>`}</tbody>
+        ${learners.length || unpaid.length ? '' : `<tr><td colspan="${components.length + 4}" class="muted">No learners in this class.</td></tr>`}</tbody>
       </table></div>
       <p class="row"><button>Save and analyse</button><button type="button" class="secondary" data-close>Close</button></p></form>
       <div data-msg></div>
     </div>`;
   const f = $('#sg', box);
   $('[data-close]', box).onclick = () => { box.innerHTML = ''; };
+  // % = marks ÷ "out of" for the columns filled in, then the CBC level (same as the teacher's sheet).
+  const key2 = levelsFor(a.classes.grade).levels;
+  const live = () => {
+    const max = Object.fromEntries($$('[data-max]', f).map(i => [i.dataset.max, Number(i.value)]));
+    for (const row of $$('[data-l]', f)) {
+      let got = 0; let out = 0;
+      for (const i of $$('[data-c]', row)) if (i.value !== '') { got += Number(i.value); out += max[i.dataset.c] || 0; }
+      const absent = $('[data-absent]', row).checked;
+      const p = absent || !out ? null : Math.round((got / out) * 1000) / 10;
+      $('[data-pct]', row).textContent = absent ? 'ABS' : p == null ? '' : p;
+      $('[data-lvl]', row).innerHTML = p == null ? '' : pill(key2.find(l => p >= l.min)?.code);
+    }
+  };
+  f.addEventListener('input', live);
+  live();
   f.onsubmit = action($('button', f), $('[data-msg]', box), async () => {
     const out = [];
     for (const row of $$('[data-l]', f)) {
       const absent = $('[data-absent]', row).checked;
-      const comment = $('[data-comment]', row).value.trim() || null;
       $$('[data-c]', row).forEach((input, i) => out.push({
-        learner_id: row.dataset.l, component_id: input.dataset.c, raw_score: absent ? null : input.value, absent, comment: i === 0 ? comment : null,
+        learner_id: row.dataset.l, component_id: input.dataset.c, raw_score: absent ? null : input.value, absent,
       }));
     }
     const max_scores = $$('[data-max]', f).map(i => ({ component_id: i.dataset.max, max_score: Number(i.value) }));
@@ -729,7 +743,7 @@ function levelsFor(grade) {
   const o = S.school.grading?.[id] || {};
   const levels = base.map(([code, min]) => [code, o[code] != null ? Number(o[code]) : min]);
   levels[levels.length - 1][1] = 0;
-  return { id, levels: levels.map(([code, min], i) => ({ code, range: i ? `${min}–${levels[i - 1][1] - 1}%` : `${min}–100%` })) };
+  return { id, levels: levels.map(([code, min], i) => ({ code, min, range: i ? `${min}–${levels[i - 1][1] - 1}%` : `${min}–100%` })) };
 }
 
 const LEVEL_NAMES = { EE: 'Exceeding Expectations', ME: 'Meeting Expectations', AE: 'Approaching Expectations', BE: 'Below Expectations' };
@@ -737,11 +751,11 @@ const rfPill = code => (code ? `<span class="pill l-${esc(code.slice(0, 2))}">${
 const longDate = d => (d ? new Date(d + 'T00:00:00').toLocaleDateString('en-KE', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }) : '____________________');
 
 const rfNum = v => (v == null ? '' : Math.round(v * 10) / 10);
-const rfComment = v => `<td class="comment">${esc(v.comment || '')}</td><td class="num">${esc(v.teacher_initials || '')}</td>`;
+const rfComment = v => `<td class="comment">${esc(v.remark || '')}</td><td class="num">${esc(v.teacher_initials || '')}</td>`;
 
 function perfTable(x, r) {
   const tail = '<col style="width:13mm"><col style="width:12mm"><col><col style="width:11mm">';
-  const head = label => `<th class="num">${label}</th><th class="num">Level</th><th style="text-align:left">Teacher's comment</th><th class="num">Init.</th>`;
+  const head = label => `<th class="num">${label}</th><th class="num">Level</th><th style="text-align:left">Remarks</th><th class="num">Init.</th>`;
   const avg = v => `<td class="num avg">${rfNum(v.average)}</td><td class="num">${rfPill(v.level)}</td>`;
   const overall = cols => `<tr class="overall"><td>OVERALL</td>${cols}<td class="num">${x.overall_percent ?? ''}</td><td class="num">${rfPill(x.overall_level)}</td><td colspan="2"></td></tr>`;
   if (r.term === 0) {
@@ -1495,8 +1509,10 @@ async function renderHelp() {
         (marks scored ÷ marks possible) into a percentage and a CBC level.</li>
       <li><b>Only paid-for learners</b> get scores. Unpaid learners are listed, but no scores can be entered for them and they are not on
         teachers' sheets. When you pay for a learner later, they are added automatically to the bottom of every sheet already sent for that term.</li>
-      <li>Each teacher receives an email from Google with their sheet. They type marks, put <b>Y</b> under Absent for absent learners, and may add a short
-        comment for each learner, which appears on the report form. Names are locked, and marks above the maximum are refused.</li>
+      <li>Each teacher receives an email from Google with their sheet. They type marks and put <b>Y</b> under Absent for absent learners. The sheet works out
+        each learner's % and CBC level as they type. Names are locked, and marks above the "Out of" are refused.</li>
+      <li>Teachers don't write comments: the report form shows a <b>rubric remark</b> for each learning area from the level
+        (e.g. ME1 "Good. Meeting expectations."; strand-by-strand schools also get the strand to work on).</li>
       <li>A teacher who cannot use Google Sheets can give you the marks on paper: open the assessment and press <b>Enter scores here</b>.</li>
     </ol>`)}
     ${step(3, 'Analyse', `<ol>

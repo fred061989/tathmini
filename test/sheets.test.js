@@ -1,23 +1,24 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { buildSheetLayout, parseSheetValues, colLetter } = require('../lib/sheets');
+const { buildSheetLayout, parseSheetValues, colLetter, rowFormulas } = require('../lib/sheets');
+const { buildScale } = require('../lib/cbc');
 
 const components = [{ id: 'c1', label: 'Numbers', max_score: 20 }, { id: 'c2', label: 'Geometry', max_score: 10 }];
 const learners = [{ id: 'l1', adm_no: '101', first_name: 'Amani', last_name: 'Otieno' }, { id: 'l2', adm_no: '102', first_name: 'Baraka', last_name: 'Kamau' }];
 
 test('sheet layout: headings, an "Out of" row, then one row per learner', () => {
   const layout = buildSheetLayout({ components, learners });
-  assert.deepEqual(layout.header, ['Learner ID', 'ADM No', 'Learner Name', 'Numbers', 'Geometry', 'Absent (Y)', 'Comment']);
-  assert.deepEqual(layout.outOf, ['', '', 'OUT OF →', 20, 10, '', '']);
-  assert.deepEqual(layout.rows[0], ['l1', '101', 'Amani Otieno', '', '', '', '']);
+  assert.deepEqual(layout.header, ['Learner ID', 'ADM No', 'Learner Name', 'Numbers', 'Geometry', 'Absent (Y)', '%', 'Level']);
+  assert.deepEqual(layout.outOf, ['', '', 'OUT OF →', 20, 10, '', '', '']);
+  assert.deepEqual(layout.rows[0], ['l1', '101', 'Amani Otieno', '', '', '', '', '']);
   assert.deepEqual([colLetter(0), colLetter(3), colLetter(25), colLetter(26), colLetter(27)], ['A', 'D', 'Z', 'AA', 'AB']);
 });
 
-test('reads scores, absences and comments', () => {
+test('reads scores and absences (no teacher comments)', () => {
   const { top } = buildSheetLayout({ components, learners });
-  const { scores, issues, maxScores } = parseSheetValues([...top, ['l1', 101, 'Amani Otieno', 15, 7, '', 'Good work'], ['l2', 102, 'Baraka Kamau', '', '', 'y']], components, learners);
+  const { scores, issues, maxScores } = parseSheetValues([...top, ['l1', 101, 'Amani Otieno', 15, 7, '', 73.3, 'ME1'], ['l2', 102, 'Baraka Kamau', '', '', 'y']], components, learners);
   assert.deepEqual(issues, []);
-  assert.deepEqual(scores[0], { learner_id: 'l1', component_id: 'c1', raw_score: '15', absent: false, comment: 'Good work' });
+  assert.deepEqual(scores[0], { learner_id: 'l1', component_id: 'c1', raw_score: '15', absent: false, comment: null });
   assert.equal(scores[2].absent, true);
   assert.deepEqual(maxScores, [{ component_id: 'c1', max_score: 20 }, { component_id: 'c2', max_score: 10 }]);
 });
@@ -37,4 +38,13 @@ test('rejects edited headers or a missing "Out of" row; flags unknown and missin
   const { scores, issues } = parseSheetValues([...top, ['l1', '', '', 1, 1], ['zzz', '', 'Stranger', 1, 1]], components, learners);
   assert.equal(scores.length, 2);
   assert.equal(issues.length, 2);
+});
+
+test('the sheet works out % and the CBC level as the teacher types', () => {
+  const f = rowFormulas(components, buildScale('cbc8').levels, 3, 4);
+  assert.equal(f.range, 'G3:H4'); // after Numbers (D), Geometry (E), Absent (F)
+  assert.equal(f.values[0][0], '=IF(UPPER(F3)="Y","ABS",IF(COUNT(D3:E3)=0,"",ROUND(SUM(D3:E3)/SUMPRODUCT((D3:E3<>"")*D$2:E$2)*100,1)))');
+  assert.equal(f.values[1][1], '=IF(ISNUMBER(G4),IF(G4>=90,"EE1",IF(G4>=75,"EE2",IF(G4>=58,"ME1",IF(G4>=41,"ME2",IF(G4>=31,"AE1",IF(G4>=21,"AE2",IF(G4>=11,"BE1","BE2"))))))),G4)');
+  // A school's own thresholds are used
+  assert.match(rowFormulas(components, buildScale('cbc4', { cbc4: { EE: 75 } }).levels, 3, 3).values[0][1], /G3>=75,"EE"/);
 });
