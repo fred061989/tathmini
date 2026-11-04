@@ -835,14 +835,13 @@ function perfTable(x, r) {
         The overall average gives each learning area equal weight. CBC learners are not ranked.</div>`;
   }
   if (r.style === 'strands') {
-    // Strands in two columns, and a narrower remarks column, so nine learning areas with four strands each fit one A4 page.
-    return `<table class="perf strands-mode"><colgroup><col style="width:30mm"><col style="width:90mm"><col style="width:12mm"><col style="width:11mm"><col><col style="width:9mm"></colgroup>
-      <thead><tr><th style="text-align:left">Learning area</th><th style="text-align:left">Strands (level)</th>${head('Term<br>average')}</tr></thead>
-      <tbody>${r.areas.map(a => { const v = x.areas[a.id]; const sts = (v.strands || []).filter(st => st.level);
-        return `<tr><td>${esc(a.name)}</td><td class="strands">${sts.length ? `<div class="sg">${sts.map(st => `<span><i>${esc(st.name)}</i>${rfPill(st.level)}</span>`).join('')}</div>`
-          : v.cells?.absent ? '<span class="abs">AB</span>' : v.average != null ? '<span class="note">Total marks (not by strand)</span>' : ''}</td>${avg(v)}${rfComment(v)}</tr>`; }).join('')}
-        ${overall('<td></td>')}</tbody></table>
-      <div class="note">Each strand's level comes from all of the learner's marks for that strand this term, added up (marks scored ÷ marks possible); the term percentage adds up all strand marks.
+    // Strand-by-strand schools: just each learning area's term average (all its strand marks added up).
+    return `<table class="perf"><colgroup><col style="width:46mm">${tail}</colgroup>
+      <thead><tr><th style="text-align:left">Learning area</th>${head('Term<br>average %')}</tr></thead>
+      <tbody>${r.areas.map(a => { const v = x.areas[a.id];
+        return `<tr><td>${esc(a.name)}</td>${v.average == null && v.cells?.absent ? '<td class="num avg"><span class="abs">AB</span></td><td></td>' : avg(v)}${rfComment(v)}</tr>`; }).join('')}
+        ${overall('')}</tbody></table>
+      <div class="note">The term average adds up all of the learner's strand marks in the learning area this term (marks scored ÷ marks possible).
         AB = absent. The overall average gives each learning area equal weight. CBC learners are not ranked.</div>`;
   }
   return `<table class="perf"><colgroup><col style="width:34mm">${r.columns.map(() => '<col style="width:11.5mm">').join('')}${tail}</colgroup>
@@ -866,7 +865,7 @@ function reportForm(x, r) {
   const extra = [];
   if (x.co_curricular) extra.push(`<div><b>Co-curricular:</b> ${esc(x.co_curricular)}</div>`);
   return `
-  <section class="rf${r.style === 'strands' && r.term !== 0 ? ' compact' : ''}" style="${colourVars(sch.colour)}">
+  <section class="rf" style="${colourVars(sch.colour)}">
     <div class="head">
       ${sch.logo ? `<img class="logo" src="${esc(sch.logo)}" alt="">` : `<div class="crest">${esc(crest)}</div>`}
       <div class="school"><div class="name">${esc(sch.name)}</div>${meta ? `<div class="meta">${meta}</div>` : ''}${sch.motto ? `<div class="motto">“${esc(sch.motto)}”</div>` : ''}</div>
