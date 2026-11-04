@@ -141,7 +141,8 @@ function route() {
   };
   const fn = views[current] || views[tabs[0][0]];
   view().innerHTML = '<p class="muted">Loading…</p>';
-  fn(arg).catch(err => { view().innerHTML = '<div id="m"></div>'; notice($('#m'), err); });
+  // Returned so callers can wait for the page to finish drawing before adding a message to it.
+  return fn(arg).catch(err => { view().innerHTML = '<div id="m"></div>'; notice($('#m'), err); });
 }
 
 // ---------- Onboarding ----------
