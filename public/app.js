@@ -124,7 +124,7 @@ async function loadMe() {
 }
 
 const TABS = [['dashboard', 'Assessments'], ['new', 'New assessment'], ['results', 'Class results'], ['reports', 'Report forms'],
-  ['classes', 'Classes & learners'], ['teachers', 'Teachers'], ['curriculum', 'Curriculum'], ['settings', 'Settings']];
+  ['classes', 'Classes & learners'], ['teachers', 'Teachers'], ['curriculum', 'Curriculum'], ['settings', 'Settings'], ['help', 'Help']];
 const OWNER_TABS = [['curriculum', 'National curriculum'], ['schools', 'All schools']];
 
 function route() {
@@ -137,7 +137,7 @@ function route() {
   const views = {
     dashboard: renderDashboard, new: renderNewAssessment, assessment: renderAssessment, results: renderResults,
     reports: renderReports, report: renderReportForms, classes: renderClasses, class: renderClass,
-    teachers: renderTeachers, curriculum: renderCurriculum, settings: renderSettings, schools: renderSchools,
+    teachers: renderTeachers, curriculum: renderCurriculum, settings: renderSettings, schools: renderSchools, help: renderHelp,
   };
   const fn = views[current] || views[tabs[0][0]];
   view().innerHTML = '<p class="muted">Loading…</p>';
@@ -175,10 +175,19 @@ async function renderOnboarding() {
 // ---------- Assessments dashboard ----------
 
 async function renderDashboard() {
-  const [list, billing] = await Promise.all([api('GET', '/api/assessments'), api('GET', '/api/billing')]);
+  const [list, billing, setup] = await Promise.all([api('GET', '/api/assessments'), api('GET', '/api/billing'), api('GET', '/api/setup-status')]);
+  const next = setup.steps.find(st => !st.done);
   const count = s => list.filter(a => a.status === s).length;
   view().innerHTML = `
     <div class="row" style="justify-content:space-between"><h1>Assessments</h1><a class="btn" href="#new">New assessment</a></div>
+    ${setup.done ? '' : `
+    <div class="card" style="border-color:var(--accent)">
+      <div class="row" style="justify-content:space-between"><h2 style="margin:0">Getting started</h2>
+        <span class="muted">${setup.steps.filter(st => st.done).length} of ${setup.steps.length} done · <a href="#help">How it works</a></span></div>
+      <ol style="margin:10px 0 0;padding-left:0;list-style:none">${setup.steps.map(st => `
+        <li style="padding:4px 0">${st.done ? '<span style="color:var(--accent)">✔</span>' : '<span class="muted">○</span>'}
+          ${st.done ? `<span class="muted">${esc(st.label)}</span>` : `<a href="${st.link}">${esc(st.label)}</a>${st === next ? ' <span class="pill" style="color:var(--accent)">next</span>' : ''}`}</li>`).join('')}</ol>
+    </div>`}
     ${S.school.google_connected ? '' : '<div class="notice error">Google is not connected, so score sheets cannot be sent to teachers. <a href="#settings">Connect it in Settings</a>.</div>'}
     ${billing.unpaid.length ? `<div class="notice error">${billing.unpaid.length} learner(s) are not paid for Term ${billing.term} ${billing.year}, so they are left out of new sheets and report forms. <a href="#settings">Pay in Settings → Billing</a>.</div>` : ''}
     <div class="grid">
@@ -1233,6 +1242,63 @@ async function payPrompt(box, learnerIds, message, period = {}) {
       box.innerHTML = `<div class="notice">Paid for ${out.learners} learner(s): ${money(out.charged_cents)}. Balance now ${money(out.balance_cents)}.</div>`;
     });
   });
+}
+
+// ---------- Help ----------
+
+async function renderHelp() {
+  const step = (n, title, body) => `<div class="card"><h2 style="margin-top:0">${n}. ${title}</h2>${body}</div>`;
+  view().innerHTML = `
+    <h1>How Tathmini works</h1>
+    <p class="muted">Only school admins (for example the head teacher and the ICT person) sign in. Teachers never sign in: they receive a
+      Google Sheet by Gmail for each assessment, type in the scores, and Tathmini does the rest.</p>
+    ${step(1, 'Set up the school (once)', `<ol>
+      <li><a href="#settings">Settings</a>: add the school's address, phone, motto, head teacher's name and logo. They are printed on report forms.</li>
+      <li><a href="#settings">Settings</a>: press <b>Connect Google</b> and sign in with the school's Google account. Score sheets are created there.</li>
+      <li><a href="#classes">Classes & learners</a>: add each class (grade, stream, year, class teacher).</li>
+      <li>Open a class and add learners: upload an Excel file, or paste rows from Excel. Download the template if you need one.</li>
+      <li>Pay for the learners: <b>KES 20 per learner per term</b>, or <b>KES 50 per learner for the whole year</b>. The money comes from the school's
+        account balance; to top it up, pay the Tathmini team and they credit your account. Learners not paid for are left out of sheets and report forms.</li>
+      <li><a href="#teachers">Teachers</a>: add each teacher with their <b>Gmail</b>, then say who teaches which learning area in each class.</li>
+    </ol>`)}
+    ${step(2, 'Give an assessment', `<ol>
+      <li><a href="#new">New assessment</a>: choose the class, tick the learning areas, the type (opener, weekly, monthly, mid-term, end-term) and the term.</li>
+      <li>Score it as a total (e.g. out of 50), or strand by strand, or sub-strand by sub-strand. Strands come from the CBC curriculum.</li>
+      <li>Each teacher receives an email from Google with their sheet. They type marks, put <b>Y</b> under Absent for absent learners, and may add a short
+        comment for each learner, which appears on the report form. Names are locked, and marks above the maximum are refused.</li>
+      <li>A teacher who cannot use Google Sheets can give you the marks on paper: open the assessment and press <b>Enter scores here</b>.</li>
+    </ol>`)}
+    ${step(3, 'Analyse', `<ol>
+      <li>On <a href="#dashboard">Assessments</a>, press <b>Check progress</b> to see how many learners each teacher has entered.</li>
+      <li>When complete, press <b>Analyse</b>. Scores become CBC levels for each learner and strand, with the class mean, strands to re-teach,
+        learners needing support and progress since the last test. If a mark is wrong (e.g. 25 out of 20), Tathmini tells you which learner to fix.</li>
+    </ol>`)}
+    ${step(4, 'End of term: class results and report forms', `<ol>
+      <li><a href="#results">Class results</a>: the class teacher's sheet, with every learner's term average per learning area and the class means.
+        Print it, or download it as Excel.</li>
+      <li><a href="#reports">Report forms</a>: choose the class and term. Set the closing date and the date next term begins.</li>
+      <li>The class teacher's and head teacher's comments are written for you from each learner's results. Read them, change anything, and press <b>Save comments</b>.</li>
+      <li>Press <b>Print or download all report forms</b>. Print them, or download a ZIP file with one PDF per learner.</li>
+      <li>When the reports are final, press <b>Close term</b>. This locks the term's results so printed reports never change. You can reopen it if needed.</li>
+    </ol>`)}
+    ${step(5, 'Each new year', `<ol>
+      <li>Open each class and press <b>Promote</b> to move all its learners to the next grade (e.g. Grade 7 East 2026 → Grade 8 East 2027).
+        Old report forms stay available. For a final-year class, press <b>Learners have finished school</b>.</li>
+      <li>Pay for the new term or year in <a href="#settings">Settings → Billing</a>.</li>
+    </ol>`)}
+    <div class="card"><h2 style="margin-top:0">How the numbers are worked out</h2><ul>
+      <li><b>Levels:</b> Grades 7–9 use the 8-level CBC rubric (EE1 90%+, EE2 75%+, ME1 58%+, ME2 41%+, AE1 31%+, AE2 21%+, BE1 11%+, BE2 below);
+        PP1–Grade 6 use 4 levels (EE 80%+, ME 50%+, AE 30%+, BE below). You can change the thresholds in Settings.</li>
+      <li><b>Term average:</b> each assessment type counts once (two monthly tests are averaged into one Monthly score), then the types are averaged.</li>
+      <li><b>Absent</b> learners are left out of an average, never counted as zero.</li>
+      <li><b>Overall average:</b> every learning area counts equally. Learners are not ranked, as CBC guidance advises.</li>
+    </ul></div>
+    <div class="card"><h2 style="margin-top:0">Common questions</h2><ul>
+      <li><b>A teacher didn't get the email?</b> Check their Gmail address on the Teachers page, and their spam folder. The sheet link is also on the assessment page.</li>
+      <li><b>A teacher left?</b> On Teachers, press Remove, then give their learning areas to another teacher.</li>
+      <li><b>A learner joined mid-term?</b> Add them to the class and pay KES 20 for this term. They then appear in new sheets.</li>
+      <li><b>A learner left?</b> Open the class and press Remove next to their name. Their past report forms are kept.</li>
+    </ul></div>`;
 }
 
 // ---------- Owner: all schools ----------

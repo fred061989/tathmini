@@ -353,3 +353,19 @@ test('school logo: only small real images are accepted, and it reaches the repor
   assert.equal(ok(await admin('PATCH', '/api/school', { logo: null })).school.logo, null);
   assert.equal((await admin('PATCH', '/api/school', { name: '  ' })).status, 400);
 });
+
+test('getting started checklist reflects what the school has done', async () => {
+  fake.users.set('new-admin', { id: 'u-new', email: 'head@newschool.ac.ke' });
+  const fresh = as('new-admin');
+  ok(await fresh('POST', '/api/schools', { name: 'New Hope Academy', full_name: 'Mary Head' }));
+  let st = ok(await fresh('GET', '/api/setup-status'));
+  assert.equal(st.done, false);
+  assert.ok(st.steps.every(x => !x.done));
+  ok(await fresh('PATCH', '/api/school', { head_teacher_name: 'Mrs M. Head', phone: '0700000000' }));
+  ok(await fresh('POST', '/api/classes', { grade: 4, stream: 'Blue', year: new Date().getFullYear() }));
+  st = ok(await fresh('GET', '/api/setup-status'));
+  assert.deepEqual(st.steps.filter(x => x.done).map(x => x.key), ['details', 'classes']);
+  // The first school is fully set up
+  const first = ok(await admin('GET', '/api/setup-status'));
+  assert.ok(first.steps.find(x => x.key === 'analysed').done);
+});
