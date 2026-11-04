@@ -35,7 +35,7 @@ Only school **admins** sign in, e.g. the head teacher and the ICT person. **Teac
 
 **Out of:** row 2 of each teacher's sheet says what each column is marked out of. The admin sets it; the teacher can change it (e.g. a test given out of 50). Percentages always use it, and marks above it are refused.
 
-**Only paid-for learners** get scores. Unpaid learners are listed in the app, but no scores can be entered for them and they are not on teachers' sheets. When a learner is paid for, they are added automatically to the bottom of every sheet already sent for that term (the assessment page offers a retry if Google could not be reached).
+**Only paid-for learners** get scores. Unpaid learners are listed in the app, but no scores can be entered for them and they are not on teachers' sheets. A class where nobody is paid for yet is held ("Waiting for payment") and sent automatically once paid for, as a new tab in the teacher's workbook from the same batch (no new email) or as a new workbook. When a learner is paid for, they are added automatically to the bottom of every sheet already sent for that term (the assessment page offers a retry if Google could not be reached).
 
 **End-of-year average:** the mean of the Term 1, 2 and 3 averages (a term without results is left out). Choose **Whole year** on Class results or Report forms for the year sheet and end-of-year report forms.
 

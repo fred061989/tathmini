@@ -12,7 +12,7 @@ const pill = lvl => (lvl ? `<span class="pill lvl-${esc(lvl)}">${esc(lvl)}</span
 const pct = v => (v == null ? '–' : `${Number(v).toFixed(1).replace(/\.0$/, '')}%`);
 const money = cents => `KES ${(cents / 100).toLocaleString('en-KE', { minimumFractionDigits: cents % 100 ? 2 : 0, maximumFractionDigits: 2 })}`;
 const STATUS = { draft: 'Draft', sheet_ready: 'With teacher', analysed: 'Analysed' };
-const status = s => `<span class="pill status-${esc(s)}">${esc(STATUS[s] || s)}</span>`;
+const status = (s, a) => (a?.waiting_for_payment && s === 'draft' ? '<span class="pill" style="color:var(--warn)">Waiting for payment</span>' : `<span class="pill status-${esc(s)}">${esc(STATUS[s] || s)}</span>`);
 const KINDS = { strand: 'Strand assessment', opener: 'Opener', weekly: 'Weekly', monthly: 'Monthly', mid_term: 'Mid-term', end_term: 'End-term', custom: 'Other test' };
 const LEVEL_COLORS = { E: 'var(--lvl-ee)', M: 'var(--lvl-me)', A: 'var(--lvl-ae)', B: 'var(--lvl-be)' };
 const GRADES = [-1, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9];
@@ -233,7 +233,7 @@ async function renderDashboard() {
           <td><a href="#assessment/${a.id}">${esc(a.title)}</a><div class="muted">${esc(a.learning_areas?.name)} · ${esc(classLabel(a.classes))}</div></td>
           <td>${esc(a.staff?.full_name || '')}</td>
           <td>${esc(a.assessed_on)}${a.due_on ? `<div class="muted">${dueText(a)}</div>` : ''}</td>
-          <td>${status(a.status)}</td>
+          <td>${status(a.status, a)}</td>
           <td>${a.sheet_url ? `<a href="${esc(a.sheet_url)}" target="_blank" rel="noopener">Open</a>` : ''}
             ${a.status === 'sheet_ready' ? `<div><a href="#" data-progress="${a.id}">Check progress</a></div>` : ''}</td>
           <td class="num">${a.summary ? `${pct(a.summary.mean_percent)} ${pill(a.summary.mean_level)}` : ''}</td>
@@ -418,7 +418,7 @@ async function renderNewAssessment() {
     const notes = out.created.filter(c => c.note).map(c => `${c.assessment.title}: ${c.note}`);
     if (out.created.length === 1 && !notes.length) { location.hash = `#assessment/${out.created[0].assessment.id}`; return; }
     location.hash = '#dashboard';
-    if (notes.length) setTimeout(() => notice($('#m'), { message: 'Some learning areas were not sent', details: notes }), 300);
+    if (notes.length) setTimeout(() => notice($('#m'), { message: 'Some learning areas are waiting', details: notes }), 300);
     else if (out.workbooks) setTimeout(() => notice($('#m'), null, `Sent ${out.created.length} learning areas as ${out.workbooks} Google Sheet${out.workbooks === 1 ? '' : 's'} (one per teacher).`), 300);
   });
 }
@@ -438,7 +438,7 @@ async function renderAssessment(id) {
   view().innerHTML = `
     <p><a href="#dashboard">← Assessments</a></p>
     <h1>${esc(a.title)}</h1>
-    <p class="muted">${esc(a.learning_areas?.name)} · ${esc(classLabel(a.classes))} · ${esc(KINDS[a.kind])} · Term ${a.term} · ${esc(a.assessed_on)} · ${esc(a.staff?.full_name || '')} · ${status(a.status)}${a.due_on ? ` · ${dueText(a)}` : ''}</p>
+    <p class="muted">${esc(a.learning_areas?.name)} · ${esc(classLabel(a.classes))} · ${esc(KINDS[a.kind])} · Term ${a.term} · ${esc(a.assessed_on)} · ${esc(a.staff?.full_name || '')} · ${status(a.status, a)}${a.due_on ? ` · ${dueText(a)}` : ''}</p>
     <div class="row">
       ${a.sheet_url ? `<a class="btn secondary" href="${esc(a.sheet_url)}" target="_blank" rel="noopener">Open Google Sheet</a>` : ''}
       ${!a.sheet_id ? '<button id="gen">Create and send sheet</button>' : ''}
@@ -449,6 +449,8 @@ async function renderAssessment(id) {
       ${s ? `<a class="btn secondary" href="#results?class=${a.class_id}&term=${a.term}&year=${a.year}">Class results for the term</a>` : ''}
     </div>
     ${closed ? `<p class="notice">Term ${a.term} ${a.year} is closed, so these results are locked.</p>` : ''}
+    ${a.waiting_for_payment && !a.sheet_id ? `<div class="notice" style="margin-top:12px">Waiting for payment: no learners in this class are paid for Term ${a.term} ${a.year} yet.
+      It is sent to ${esc(a.staff?.full_name || 'the teacher')} automatically as soon as they are. <a href="#settings?term=${a.term}&year=${a.year}">Pay for learners</a></div>` : ''}
     ${notOnSheet.length && !closed ? `<div class="notice error" style="margin-top:12px">${notOnSheet.length} paid learner(s) could not be added to the teacher's sheet automatically:
       ${esc(notOnSheet.map(l => l.name).join(', '))}. <button class="secondary" id="addrows">Try again</button></div>` : ''}
     ${unpaid.length ? `<div class="notice error" style="margin-top:12px">${unpaid.length} learner(s) in this class are not paid for Term ${a.term} ${a.year}, so no scores can be
@@ -1540,7 +1542,8 @@ async function payPrompt(box, learnerIds, message, period = {}) {
         const out = await api('POST', '/api/billing/pay', { learner_ids: learnerIds, term, year, plan, mpesa_code: $('[name=code]', form).value });
         box.innerHTML = `<div class="notice">Thank you. ${out.learners} learner${out.learners === 1 ? ' is' : 's are'} now paid for (${money(out.amount_cents)},
           M-Pesa ${esc(out.payment.mpesa_code)}). The Tathmini team will check the payment.
-          ${out.sheets_updated ? ` They were added to ${out.sheets_updated} teacher's sheet${out.sheets_updated === 1 ? '' : 's'} already sent.` : ''}</div>
+          ${out.sheets_updated ? ` They were added to ${out.sheets_updated} teacher's sheet${out.sheets_updated === 1 ? '' : 's'} already sent.` : ''}
+          ${out.held_sent ? ` ${out.held_sent} assessment${out.held_sent === 1 ? ' that was' : 's that were'} waiting for payment ${out.held_sent === 1 ? 'has' : 'have'} now been sent to the teachers.` : ''}</div>
           ${out.sheet_errors?.length ? `<div class="notice error">Some sheets could not be updated (open the assessment to try again): ${esc(out.sheet_errors.join('; '))}</div>` : ''}`;
       });
     };
@@ -1577,7 +1580,9 @@ async function renderHelp() {
         (e.g. the end of term). The teacher fills in each strand as it is taught and assessed. At the end, press Analyse: the marks are added up
         (marks scored ÷ marks possible) into a percentage and a CBC level.</li>
       <li><b>Only paid-for learners</b> get scores. Unpaid learners are listed, but no scores can be entered for them and they are not on
-        teachers' sheets. When you pay for a learner later, they are added automatically to the bottom of every sheet already sent for that term.</li>
+        teachers' sheets. When you pay for a learner later, they are added automatically to the bottom of every sheet already sent for that term.
+        A class where nobody is paid for yet is held ("Waiting for payment") and sent automatically once you pay: as a new tab in the
+        teacher's workbook from the same batch, or as a new sheet.</li>
       <li>Each teacher receives <b>one</b> email from Google with <b>one</b> sheet for the assessment, with a tab at the bottom for each of their
         learning areas and classes (e.g. Mathematics, CRE and Agriculture). Tick all the learning areas at once to send them together.</li>
       <li>In each tab, the teacher types marks, and <b>AB</b> in any box where a learner was absent (left out, not counted as zero). The sheet works out

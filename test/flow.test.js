@@ -30,6 +30,13 @@ sheets.createWorkbook = async (token, args) => {
 };
 sheets.readAssessmentSheet = async (token, id, tab) => { reads.push({ id, tab }); return sheetValues; };
 const appended = [];
+const addedTabs = [];
+sheets.addTabsToWorkbook = async (token, id, args) => {
+  addedTabs.push({ id, ...args });
+  const titles = sheets.tabTitles(args.tabs.map(t => t.title));
+  args.tabs.forEach((tab, i) => created.push({ ...tab, title: titles[i], spreadsheetId: id }));
+  return { spreadsheetId: id, url: `https://docs.google.com/spreadsheets/d/${id}/edit`, tabs: titles.map((title, i) => ({ title, sheetId: 200 + i })) };
+};
 sheets.addLearnersToSheet = async (token, id, args) => { appended.push({ id, ...args }); return { added: args.learners.length }; };
 
 fake.users.set('admin', { id: 'u-admin', email: 'head@kilimani.sc.ke' });
@@ -307,10 +314,21 @@ test('Phase 1 flow', async (t) => {
     assert.deepEqual([next.unpaid.length, next.quotes.year], [3, 15000]);
     const asg = fake.store.teacher_assignments.find(a => a.class_id === ids.cls);
     const out = ok(await admin('POST', '/api/assessments', { assignment_ids: [asg.id], kind: 'weekly', year: YEAR + 1, term: 1, max_score: 10 }));
-    assert.match(out.created[0].note, /no learners paid for Term 1/);
+    assert.match(out.created[0].note, /^Waiting for payment: no learners in this class are paid for Term 1/);
+    const held = out.created[0].assessment;
+    assert.deepEqual([held.status, held.waiting_for_payment, Boolean(held.sheet_id)], ['draft', true, false]);
     const schools = ok(await owner('GET', '/api/owner/schools'));
     assert.deepEqual([schools[0].name, schools[0].learners, schools[0].confirmed_cents, schools[0].pending_cents], ['Kilimani Junior School', 3, 12000, 0]);
     assert.equal((await admin('GET', '/api/owner/schools')).status, 403);
+    // Paying for the class sends the held assessment to the teacher automatically
+    const before = workbooks.length;
+    const paid = ok(await admin('POST', '/api/billing/pay', { learner_ids: 'unpaid', year: YEAR + 1, term: 1, plan: 'term', mpesa_code: 'NXT0000001' }));
+    assert.equal(paid.held_sent, 1);
+    assert.equal(workbooks.length, before + 1);
+    const now = ok(await admin('GET', `/api/assessments/${held.id}`)).assessment;
+    assert.deepEqual([now.status, now.waiting_for_payment, now.sheet_learners.length], ['sheet_ready', false, 3]);
+    // (refund the demo payment so later tests' totals are unchanged)
+    ok(await owner('POST', `/api/owner/payments/${paid.payment.id}/reject`, {}));
   });
 });
 
@@ -413,8 +431,7 @@ test('scores typed in the app (no Google Sheet) are analysed and reach the repor
 });
 
 test('deleting an assessment removes its results; not allowed once the term is closed', async () => {
-  const a = fake.store.assessments.find(x => x.status === 'draft' && x.term === 1 && x.year === new Date().getFullYear() + 1)
-    || fake.store.assessments.find(x => x.status === 'draft');
+  const a = fake.store.assessments.find(x => x.term === 1 && x.year === new Date().getFullYear() + 1);
   ok(await admin('DELETE', `/api/assessments/${a.id}`));
   assert.ok(!fake.store.assessments.some(x => x.id === a.id));
   const analysed = fake.store.assessments.find(x => x.status === 'analysed' && x.term === 2);
@@ -567,6 +584,27 @@ test('a teacher with several classes gets them all in one workbook; strand asses
   const s = ok(await admin('POST', '/api/assessments', { assignment_ids: [m8], kind: 'strand', term: 1, year, per_strand: true, due_on: `${year}-03-27`,
     components: [{ label: 'Numbers', max_score: 20 }, { label: 'Algebra', max_score: 20 }] })).created[0].assessment;
   assert.match(s.title, /Grade 8 West Mathematics - Strand assessment Term 1/);
+
+  // A class with nobody paid for is held, then joins the teacher's workbook as a new tab once paid for
+  const g9 = ok(await admin('POST', '/api/classes', { grade: 9, stream: 'South', year }));
+  const g9kids = ok(await admin('POST', '/api/learners', { class_id: g9.id, learners: [{ adm_no: '951', first_name: 'Olu', last_name: 'Kiprono' }] })).added_ids;
+  const m9 = ok(await admin('POST', '/api/assignments', { teacher_id: kirui.id, class_id: g9.id, learning_area_id: maths.id })).id;
+  const b0 = workbooks.length;
+  const mid = ok(await admin('POST', '/api/assessments', { assignment_ids: [m8, m9], kind: 'mid_term', term: 1, year, max_score: 50 }));
+  assert.equal(workbooks.length, b0 + 1);
+  assert.deepEqual(workbooks[b0].tabs.map(t => t.title), ['Mathematics – Grade 8 West']);
+  const heldA = mid.created.find(c => c.assessment.class_id === g9.id);
+  assert.match(heldA.note, /^Waiting for payment/);
+  const sentA = mid.created.find(c => c.assessment.class_id === g8.id).assessment;
+  const t0 = addedTabs.length;
+  const paid = ok(await admin('POST', '/api/billing/pay', { learner_ids: g9kids, year, term: 1, plan: 'term', mpesa_code: 'STH9000001' }));
+  assert.equal(paid.held_sent, 1);
+  assert.equal(workbooks.length, b0 + 1); // no new workbook, no new email
+  assert.equal(addedTabs.length, t0 + 1);
+  assert.equal(addedTabs[t0].id, sentA.sheet_id);
+  assert.deepEqual(addedTabs[t0].tabs.map(t => t.title), ['Mathematics – Grade 9 South']);
+  const joined = ok(await admin('GET', `/api/assessments/${heldA.assessment.id}`)).assessment;
+  assert.deepEqual([joined.status, joined.sheet_id, joined.sheet_tab, joined.waiting_for_payment], ['sheet_ready', sentA.sheet_id, 'Mathematics – Grade 9 South', false]);
 });
 
 test('getting started checklist reflects what the school has done', async () => {
