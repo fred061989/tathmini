@@ -108,9 +108,12 @@ input[type=color] { width: 40px; height: 30px; padding: 0 2px; border: 1px solid
 .rf td.comment { font-size: 9px; color: #3b4540; line-height: 1.25; }
 .rf .perf { table-layout: fixed; }
 .rf .perf td:first-child { font-size: 10px; line-height: 1.2; font-weight: 700; }
-.rf td.strands { font-size: 8.6px; line-height: 1.5; padding: 2px 5px; }
-.rf td.strands span { display: inline-block; margin-right: 6px; white-space: nowrap; }
-.rf td.strands .pill { font-size: 8px; padding: 0 4px; }
+.rf td.strands { font-size: 8.2px; line-height: 1.25; padding: 2px 5px; }
+.rf td.strands .sg { display: grid; grid-template-columns: 1fr 1fr; gap: 1px 10px; }
+.rf td.strands .sg span { display: flex; align-items: center; justify-content: space-between; gap: 4px; }
+.rf td.strands .sg i { font-style: normal; }
+.rf td.strands .pill { font-size: 7.6px; padding: 0 4px; flex: none; }
+.rf .strands-mode td.comment { font-size: 8.4px; }
 .rf tr.overall td { background: var(--sc-weak) !important; font-weight: 800; }
 .rf .pill { display: inline-block; border: 1px solid currentColor; border-radius: 99px; padding: 0 6px; font-size: 9.5px; font-weight: 700; }
 .rf .l-EE { color: #1f7a4d; } .rf .l-ME { color: #2f6db3; } .rf .l-AE { color: #9a6700; } .rf .l-BE { color: #b3261e; }
@@ -162,3 +165,13 @@ details.cls { border-top: 1px solid var(--border); padding: 8px 0; }
 details.cls summary { cursor: pointer; }
 .area-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 4px 16px; padding: 8px 0 4px 18px; }
 @media (max-width: 700px) { .kinds { grid-template-columns: 1fr; } }
+/* Strand-by-strand report forms carry more rows: tighter spacing so they stay on one A4 page. */
+.rf.compact { padding-top: 9mm; padding-bottom: 7mm; }
+.rf.compact .head { padding: 0 0 3mm; }
+.rf.compact h3 { margin: 3.5mm 0 1.2mm; }
+.rf.compact .grid2 { margin-top: 3mm; }
+.rf.compact .comments { margin-top: 3mm; }
+.rf.compact .comment-box { min-height: 13mm; }
+.rf.compact .sign { margin-top: 2mm; }
+.rf.compact .sign .stamp { height: 15mm; }
+.rf.compact .dates { margin-top: 3mm; padding: 4px; }
