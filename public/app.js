@@ -13,7 +13,7 @@ const pct = v => (v == null ? '–' : `${Number(v).toFixed(1).replace(/\.0$/, ''
 const money = cents => `KES ${(cents / 100).toLocaleString('en-KE', { minimumFractionDigits: cents % 100 ? 2 : 0, maximumFractionDigits: 2 })}`;
 const STATUS = { draft: 'Draft', sheet_ready: 'With teacher', analysed: 'Analysed' };
 const status = s => `<span class="pill status-${esc(s)}">${esc(STATUS[s] || s)}</span>`;
-const KINDS = { opener: 'Opener', weekly: 'Weekly', monthly: 'Monthly', mid_term: 'Mid-term', end_term: 'End-term', custom: 'Custom' };
+const KINDS = { strand: 'Strand assessment', opener: 'Opener', weekly: 'Weekly', monthly: 'Monthly', mid_term: 'Mid-term', end_term: 'End-term', custom: 'Other test' };
 const LEVEL_COLORS = { E: 'var(--lvl-ee)', M: 'var(--lvl-me)', A: 'var(--lvl-ae)', B: 'var(--lvl-be)' };
 const GRADES = [-1, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9];
 const thisYear = new Date().getFullYear();
@@ -262,45 +262,84 @@ async function renderDashboard() {
 
 async function renderNewAssessment() {
   const [classes, assignments, areas] = await Promise.all([api('GET', '/api/classes'), api('GET', '/api/assignments'), api('GET', '/api/curriculum')]);
-  const byStrand = S.school.assessment_style === 'strands';
+  const today = new Date().toISOString().slice(0, 10);
+  // Classes with learning areas assigned to teachers, current year first.
+  const withAreas = classes.filter(c => assignments.some(x => x.class_id === c.id))
+    .sort((a, b) => b.year - a.year || a.grade - b.grade || String(a.stream || '').localeCompare(String(b.stream || '')));
+  const active = assignments.filter(x => x.staff?.active !== false);
+  const preferStrand = S.school.assessment_style === 'strands';
   view().innerHTML = `
     <h1>New assessment</h1>
-    <p class="muted">Choose the class and learning areas. Each teacher gets <b>one</b> Google Sheet by Gmail, with a tab for each of their
-      learning areas (e.g. Maths, CRE and Agriculture in one sheet). Teachers only type marks: the % and CBC level fill in by themselves.</p>
+    <p class="muted">Tick the classes and learning areas. Each teacher gets <b>one</b> Google Sheet by Gmail, with a tab for each learning area and
+      class they teach (e.g. Maths 7 East, Maths 8 West and CRE 7 East in one sheet). Teachers only type marks: the % and CBC level fill in by themselves.</p>
     ${S.school.google_connected ? '' : '<div class="notice error">Google is not connected, so assessments will be saved as drafts. <a href="#settings">Connect it in Settings</a>.</div>'}
-    <form id="na" class="card">
-      <p><label>Class <select name="class_id" required><option value="">Choose…</option>${classes.map(c => `<option value="${c.id}">${esc(classLabel(c))}</option>`).join('')}</select></label></p>
-      <div id="areas"></div>
-      <div class="inline">
-        <label>Type <select name="kind">${Object.entries(KINDS).map(([k, v]) => `<option value="${k}" ${k === (byStrand ? 'weekly' : 'monthly') ? 'selected' : ''}>${v}</option>`).join('')}</select></label>
-        <label>Term <select name="term">${[1, 2, 3].map(t => `<option ${t === thisTerm ? 'selected' : ''}>${t}</option>`).join('')}</select></label>
-        <label>Week (optional) <input name="week" type="number" min="1" max="14" style="width:90px"></label>
-        <label>Year <input name="year" type="number" value="${thisYear}" style="width:90px"></label>
-        <label>Date <input name="assessed_on" type="date" value="${new Date().toISOString().slice(0, 10)}"></label>
-        <label>Teachers enter scores by (optional) <input name="due_on" type="date"></label>
+    <form id="na">
+      <div class="card">
+        <h2 style="margin-top:0">1. What kind of assessment?</h2>
+        <div class="kinds">
+          <label class="kind"><input type="radio" name="way" value="strand" ${preferStrand ? 'checked' : ''}>
+            <span><b>Strand assessment</b><br><span class="muted">Marks for each strand (e.g. strands 1–4), entered over the term or a period you set.
+            At the end, the marks are added up into a % and level for each strand and learning area.</span></span></label>
+          <label class="kind"><input type="radio" name="way" value="exam" ${preferStrand ? '' : 'checked'}>
+            <span><b>Exam</b><br><span class="muted">Opener, mid-term, end-term (or a monthly / weekly test), usually marked as a total out of 50 or 100.</span></span></label>
+        </div>
       </div>
-      ${byStrand ? '<p class="muted">For strand-by-strand marks over the term: create one sheet listing the strands to assess (e.g. strands 1–4), set the date to enter scores by (e.g. the end of term), and the teacher fills in each strand as it is assessed. Press Analyse at the end: marks are added up into percentages.</p>' : ''}
-      <p><label>Title (optional, one learning area only) <input name="title" placeholder="Created automatically if left blank"></label></p>
-      <p><label>Score by <select name="mode">
-        <option value="total" ${byStrand ? '' : 'selected'}>Total marks</option>
-        <option value="strand" ${byStrand ? 'selected' : ''}>Each strand</option>
-        <option value="sub">Each sub-strand</option>
-      </select></label></p>
-      ${byStrand ? '<p class="muted">Your school works out term results strand by strand (Settings), so score each strand. Marks scored as a total only count for a learning area with no strand marks.</p>' : ''}
-      <div id="total"><label>Out of (maximum marks) <input name="max_score" type="number" min="1" value="100" style="width:120px"></label></div>
-      <div id="strands" hidden>
-        <p class="muted">From the national curriculum for this grade, for each learning area ticked. Remove what is not being assessed and set
-          what each is out of (the teacher can change it in row 2 of the sheet, e.g. if a test was out of 50):</p>
-        <div id="groups"></div>
+      <div class="card">
+        <h2 style="margin-top:0">2. Classes and learning areas</h2>
+        ${withAreas.length ? withAreas.map(c => {
+          const list = active.filter(x => x.class_id === c.id).sort((a, b) => a.learning_areas.name.localeCompare(b.learning_areas.name));
+          return `<details class="cls" ${withAreas.length <= 3 ? 'open' : ''}><summary><b>${esc(classLabel(c))}</b> <span class="muted" data-count="${c.id}"></span>
+            <a href="#" data-all="${c.id}" style="margin-left:8px">tick all</a></summary>
+            <div class="area-list">${list.map(x => `<label class="check"><input type="checkbox" name="asg" value="${x.id}" data-class="${c.id}">
+              ${esc(x.learning_areas.name)} <span class="muted">(${esc(x.staff.full_name)})</span></label>`).join('')}</div></details>`;
+        }).join('') : '<p class="notice error">No learning areas are assigned to teachers yet. <a href="#teachers">Assign them under Teachers</a>.</p>'}
+        <p class="muted" id="sendinfo"></p>
       </div>
-      <p><button id="create">Create and send</button> <span class="muted" id="sendinfo"></span></p>
+      <div class="card">
+        <h2 style="margin-top:0">3. Details</h2>
+        <div class="inline">
+          <label data-exam>Type <select name="kind">${['opener', 'mid_term', 'end_term', 'monthly', 'weekly', 'custom'].map(k => `<option value="${k}" ${k === 'end_term' ? 'selected' : ''}>${KINDS[k]}</option>`).join('')}</select></label>
+          <label>Term <select name="term">${[1, 2, 3].map(t => `<option ${t === thisTerm ? 'selected' : ''}>${t}</option>`).join('')}</select></label>
+          <label>Year <input name="year" type="number" value="${thisYear}" style="width:90px"></label>
+          <label data-exam>Week (optional) <input name="week" type="number" min="1" max="14" style="width:90px"></label>
+          <label><span data-label-date>Date</span> <input name="assessed_on" type="date" value="${today}"></label>
+          <label>Teachers enter scores by <span data-optional>(optional)</span> <input name="due_on" type="date"></label>
+        </div>
+        <p data-strandnote class="muted">Teachers fill in each strand as it is assessed during the period. Press <b>Analyse</b> at the end:
+          the marks are added up (marks scored ÷ marks possible) into a % and CBC level.</p>
+        <p><label>Title (optional, one learning area only) <input name="title" placeholder="Created automatically if left blank"></label></p>
+        <p><label>Score by <select name="mode"></select></label></p>
+        <div id="total"><label>Out of (maximum marks) <input name="max_score" type="number" min="1" value="100" style="width:120px"></label></div>
+        <div id="strands" hidden>
+          <p class="muted">From the national curriculum for each class's grade. Remove what is not being assessed and set what each is out of
+            (the teacher can change it in row 2 of the sheet, e.g. if a test was out of 50). Learning areas without strands loaded yet: type them in.</p>
+          <div id="groups"></div>
+        </div>
+      </div>
+      <p><button id="create">Create and send</button></p>
       <div id="fm"></div>
     </form>`;
   const f = $('#na');
-  const chosen = () => $$('[name=asg]:checked', f).map(i => assignments.find(x => x.id === i.value));
+  const way = () => f.way.value;
+  const chosen = () => $$('[name=asg]:checked', f).map(i => active.find(x => x.id === i.value));
   const detailed = () => f.mode.value !== 'total';
 
-  // One block of strand rows per ticked learning area (kept when other areas are ticked or unticked).
+  // The two ways: a strand assessment is always scored strand by strand (or sub-strand); an exam usually as a total.
+  function setWay() {
+    const strand = way() === 'strand';
+    $$('[data-exam]', f).forEach(el => { el.hidden = strand; });
+    $('[data-strandnote]', f).hidden = !strand;
+    $('[data-label-date]', f).textContent = strand ? 'Starts on' : 'Date';
+    $('[data-optional]', f).textContent = strand ? '(e.g. the end of term)' : '(optional)';
+    const keep = f.mode.value;
+    f.mode.innerHTML = strand
+      ? '<option value="strand">Each strand</option><option value="sub">Each sub-strand</option>'
+      : '<option value="total">Total marks</option><option value="strand">Each strand (e.g. paper sections)</option>';
+    if ([...f.mode.options].some(o => o.value === keep)) f.mode.value = keep;
+    fillStrands(); sync();
+  }
+
+  // One block of strand rows per ticked class + learning area (kept when others are ticked or unticked).
   function fillStrands() {
     const box = $('#groups');
     if (!detailed()) { box.innerHTML = ''; return; }
@@ -315,43 +354,53 @@ async function renderNewAssessment() {
         ? strands.flatMap(st => (st.sub_strands.length ? st.sub_strands.map(ss => strandRow(ss.name, st.id, ss.id)) : [strandRow(st.name, st.id)]))
         : strands.map(st => strandRow(st.name, st.id));
       box.insertAdjacentHTML('beforeend', `<div class="strand-group card" data-asg="${asg.id}" data-mode="${mode}">
-        <strong>${esc(asg.learning_areas.name)}</strong> <span class="muted">(${esc(asg.staff.full_name)})</span>
+        <strong>${esc(asg.learning_areas.name)} – ${esc(classLabel(asg.classes))}</strong> <span class="muted">(${esc(asg.staff.full_name)})</span>
         ${strands.length ? '' : '<p class="muted">No strands are loaded for this learning area and grade yet; type them in.</p>'}
         <div data-rows>${rows.join('') || strandRow('')}</div>
         <button type="button" class="secondary" data-add>Add strand</button></div>`);
     }
-    // Same order as the ticked list
     sel.forEach(asg => box.appendChild($(`.strand-group[data-asg="${asg.id}"]`, box)));
   }
+
   function sync() {
     const sel = chosen();
     $('#strands').hidden = !detailed();
     $('#total').hidden = detailed();
+    $$('[data-count]', f).forEach(el => {
+      const n = sel.filter(x => x.class_id === el.dataset.count).length;
+      el.textContent = n ? `· ${n} ticked` : '';
+    });
     const teachers = new Set(sel.map(x => x.teacher_id)).size;
-    $('#create').textContent = 'Create and send';
     $('#sendinfo').textContent = sel.length
-      ? `${sel.length} learning area${sel.length === 1 ? '' : 's'} → ${teachers} Google Sheet${teachers === 1 ? '' : 's'} (one per teacher, a tab per learning area)`
-      : '';
+      ? `${sel.length} learning area${sel.length === 1 ? '' : 's'} → ${teachers} Google Sheet${teachers === 1 ? '' : 's'} (one per teacher, a tab per learning area and class)`
+      : 'Tick at least one learning area.';
   }
-  f.class_id.onchange = () => {
-    const list = assignments.filter(x => x.class_id === f.class_id.value).sort((a, b) => a.learning_areas.name.localeCompare(b.learning_areas.name));
-    $('#areas').innerHTML = list.length
-      ? `<p class="muted">Learning areas (teacher):</p>${list.map(x => `<p><label class="check">
-          <input type="checkbox" name="asg" value="${x.id}"> ${esc(x.learning_areas.name)} <span class="muted">(${esc(x.staff.full_name)})</span></label></p>`).join('')}`
-      : '<p class="notice error">No learning areas are assigned to teachers for this class yet. <a href="#teachers">Assign them under Teachers</a>.</p>';
-    fillStrands(); sync();
-  };
-  f.addEventListener('change', e => { if (['asg', 'mode'].includes(e.target.name)) { $('#fm').innerHTML = ''; fillStrands(); sync(); } });
+
+  f.addEventListener('change', e => {
+    if (e.target.name === 'way') { $('#fm').innerHTML = ''; setWay(); }
+    if (['asg', 'mode'].includes(e.target.name)) { $('#fm').innerHTML = ''; fillStrands(); sync(); }
+  });
   f.addEventListener('click', e => {
     if (e.target.matches('[data-remove]')) e.target.closest('.strand-row').remove();
     if (e.target.matches('[data-add]')) $('[data-rows]', e.target.closest('.strand-group')).insertAdjacentHTML('beforeend', strandRow(''));
+    if (e.target.matches('[data-all]')) {
+      e.preventDefault();
+      const boxes = $$(`[name=asg][data-class="${e.target.dataset.all}"]`, f);
+      const on = !boxes.every(b => b.checked);
+      boxes.forEach(b => { b.checked = on; });
+      e.target.closest('details').open = true;
+      fillStrands(); sync();
+    }
   });
+  setWay();
 
   f.onsubmit = action($('#create'), $('#fm'), async () => {
     const fd = Object.fromEntries(new FormData(f));
     const sel = chosen();
     if (!sel.length) throw new Error('Tick at least one learning area');
-    // Each learning area's own strands.
+    const strand = way() === 'strand';
+    if (strand && fd.due_on && fd.due_on < fd.assessed_on) throw new Error('The date to enter scores by is before the start date');
+    // Each class + learning area's own strands.
     const byAsg = {};
     if (detailed()) {
       for (const g of $$('.strand-group', f)) {
@@ -362,7 +411,7 @@ async function renderNewAssessment() {
       }
     }
     const out = await api('POST', '/api/assessments', {
-      assignment_ids: sel.map(x => x.id), kind: fd.kind, term: fd.term, week: fd.week || null, year: fd.year,
+      assignment_ids: sel.map(x => x.id), kind: strand ? 'strand' : fd.kind, term: fd.term, week: strand ? null : fd.week || null, year: fd.year,
       assessed_on: fd.assessed_on, due_on: fd.due_on || null, title: fd.title, per_strand: detailed(),
       components_by_assignment: detailed() ? byAsg : undefined, max_score: Number(fd.max_score),
     });
@@ -1517,8 +1566,11 @@ async function renderHelp() {
       <li><a href="#teachers">Teachers</a>: add each teacher with their <b>Gmail</b>, then say who teaches which learning area in each class.</li>
     </ol>`)}
     ${step(2, 'Give an assessment', `<ol>
-      <li><a href="#new">New assessment</a>: choose the class, tick the learning areas, the type (opener, weekly, monthly, mid-term, end-term) and the term.</li>
-      <li>Score it as a total (e.g. out of 50), or strand by strand, or sub-strand by sub-strand. Strands come from the CBC curriculum.</li>
+      <li><a href="#new">New assessment</a>: first choose the kind:
+        <ul><li><b>Strand assessment</b>: marks for each strand (e.g. strands 1–4), filled in over the term or a period you set. Set "Teachers enter
+          scores by" (e.g. the end of term). At the end, press Analyse: the marks are added up into a % and level.</li>
+        <li><b>Exam</b>: opener, mid-term, end-term (or a monthly / weekly test), usually a total out of 50 or 100, or by strand (e.g. paper sections).</li></ul></li>
+      <li>Tick the classes and learning areas, as many as you like ("tick all" ticks a whole class). Strands come from the CBC curriculum.</li>
       <li><b>Out of:</b> row 2 of the teacher's sheet says what each column is marked out of. If the teacher gave the test out of 50 instead of 20,
         they change it there. Tathmini turns every mark into a percentage using it, so 40 out of 50 is 80%.</li>
       <li><b>Strands over the term:</b> list the strands for the term (e.g. strands 1–4) in one assessment and set <b>Teachers enter scores by</b>

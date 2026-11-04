@@ -105,7 +105,7 @@ CREATE TABLE IF NOT EXISTS assessments (
   learning_area_id UUID NOT NULL REFERENCES learning_areas(id) ON DELETE CASCADE,
   teacher_id UUID REFERENCES staff(id) ON DELETE SET NULL,
   title TEXT NOT NULL,
-  kind TEXT NOT NULL CHECK (kind IN ('opener', 'weekly', 'monthly', 'mid_term', 'end_term', 'custom')),
+  kind TEXT NOT NULL CHECK (kind IN ('strand', 'opener', 'weekly', 'monthly', 'mid_term', 'end_term', 'custom')),
   per_strand BOOLEAN NOT NULL DEFAULT FALSE,
   term INTEGER NOT NULL CHECK (term BETWEEN 1 AND 3),
   year INTEGER NOT NULL,

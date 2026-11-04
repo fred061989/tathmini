@@ -538,6 +538,37 @@ test('one workbook per teacher: a tab for each learning area, each with its own 
   assert.deepEqual(tabs, [...kWb.tabs.map(t => t.title), 'English – Grade 7 North'].sort());
 });
 
+test('a teacher with several classes gets them all in one workbook; strand assessments vs exams', async () => {
+  const year = new Date().getFullYear();
+  const kirui = fake.store.staff.find(s => s.full_name === 'Peter Kirui');
+  // (Another school in these tests also has a Grade 7 North, so find Mr Kirui's.)
+  const north = fake.store.classes.find(c => c.stream === 'North' && fake.store.teacher_assignments.some(x => x.class_id === c.id && x.teacher_id === kirui.id));
+  const g8 = ok(await admin('POST', '/api/classes', { grade: 8, stream: 'West', year }));
+  const kid = ok(await admin('POST', '/api/learners', { class_id: g8.id, learners: [{ adm_no: '901', first_name: 'Nuru', last_name: 'Wambui' }] })).added_ids;
+  ok(await admin('POST', '/api/billing/pay', { learner_ids: kid, year, term: 1, plan: 'year', mpesa_code: 'WST8000001' }));
+  const maths = (await admin('GET', '/api/curriculum?grade=7')).body.find(a => a.name === 'Mathematics');
+  const m8 = ok(await admin('POST', '/api/assignments', { teacher_id: kirui.id, class_id: g8.id, learning_area_id: maths.id })).id;
+  const mine = fake.store.teacher_assignments.filter(x => x.teacher_id === kirui.id && [north.id, g8.id].includes(x.class_id)).map(x => x.id);
+  assert.equal(mine.length, 4); // 3 in 7 North + Maths in 8 West
+  assert.ok(mine.includes(m8));
+
+  // An exam (end-term, total marks) for all four: ONE workbook with four tabs across two classes
+  const before = workbooks.length;
+  const exam = ok(await admin('POST', '/api/assessments', { assignment_ids: mine, kind: 'end_term', term: 1, year, max_score: 100 }));
+  assert.equal(exam.workbooks, 1);
+  const wb = workbooks[before];
+  assert.deepEqual(wb.tabs.map(t => t.title).sort(), ['Agriculture and Nutrition – Grade 7 North', 'Christian Religious Education – Grade 7 North',
+    'Mathematics – Grade 7 North', 'Mathematics – Grade 8 West']);
+  assert.match(wb.title, /Peter Kirui - End-term Term 1/);
+  assert.ok(wb.tabs.every(t => t.components.length === 1 && t.components[0].label === 'Total'));
+
+  // A strand assessment must be scored by strand, and is named as one
+  assert.equal((await admin('POST', '/api/assessments', { assignment_ids: [m8], kind: 'strand', term: 1, year, max_score: 100 })).status, 400);
+  const s = ok(await admin('POST', '/api/assessments', { assignment_ids: [m8], kind: 'strand', term: 1, year, per_strand: true, due_on: `${year}-03-27`,
+    components: [{ label: 'Numbers', max_score: 20 }, { label: 'Algebra', max_score: 20 }] })).created[0].assessment;
+  assert.match(s.title, /Grade 8 West Mathematics - Strand assessment Term 1/);
+});
+
 test('getting started checklist reflects what the school has done', async () => {
   fake.users.set('new-admin', { id: 'u-new', email: 'head@newschool.ac.ke' });
   const fresh = as('new-admin');

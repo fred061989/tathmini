@@ -154,3 +154,11 @@ input[type=color] { width: 40px; height: 30px; padding: 0 2px; border: 1px solid
 
 tr.out-of td { background: var(--accent-weak); }
 tr.unpaid td { background: var(--surface); opacity: .75; }
+.kinds { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.kind { flex-direction: row; align-items: flex-start; gap: 10px; border: 1px solid var(--border); border-radius: var(--radius); padding: 12px 14px; color: var(--text); cursor: pointer; }
+.kind:has(input:checked) { border-color: var(--accent); background: var(--accent-weak); }
+.kind input { margin-top: 3px; }
+details.cls { border-top: 1px solid var(--border); padding: 8px 0; }
+details.cls summary { cursor: pointer; }
+.area-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 4px 16px; padding: 8px 0 4px 18px; }
+@media (max-width: 700px) { .kinds { grid-template-columns: 1fr; } }
